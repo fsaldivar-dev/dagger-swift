@@ -18,11 +18,9 @@ enum AppModuleImpl: AppModule {
     @Singleton(AnalyticsFakerImpl())
     static var analytics: any Analytics
     
-    @Provider( AppRepositoryFakerImpl(api: Self.appClient) )
+    @Provider( AppRepositoryFakerImpl() )
     static var appRepository: any AppRepository
 }
-
-
 
 final class DataRepositoryFakerImpl: DataRepository {
     func fetchData() -> [String] {
