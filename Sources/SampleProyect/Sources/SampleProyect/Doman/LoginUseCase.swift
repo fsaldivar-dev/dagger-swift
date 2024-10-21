@@ -5,7 +5,7 @@
 //  Created by Saldivar on 21/10/24.
 //
 
-public protocol LoginUseCase: Actor {
+protocol LoginUseCase: Actor {
     func login(with user: String, password: String) async throws -> String
 }
 

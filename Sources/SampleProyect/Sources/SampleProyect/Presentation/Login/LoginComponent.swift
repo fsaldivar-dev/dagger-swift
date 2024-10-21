@@ -8,12 +8,12 @@
 import DaggerSwift
 import SwiftUI
 
-public protocol LoginComponent: Component {
+protocol LoginComponent: Component {
     
     static func loginView() async -> any View
 }
 
-public enum LoginComponentImpl<Module: AppModule>: LoginComponent {
+enum LoginComponentImpl<Module: AppModule>: LoginComponent {
     
     @MainActor public static func loginView() -> any View {
         let loginUseCase = LoginUseCaseImpl(apiClient: module.appClient)
