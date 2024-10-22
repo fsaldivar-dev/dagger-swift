@@ -22,8 +22,8 @@ public enum SampleProyectDispatcherRoutes {
     case error
 }
 
-public final class SampleProyectDispatcher {
-    nonisolated(unsafe) static var module: AppModule.Type!
+public actor SampleProyectDispatcher {
+    static var module: AppModule.Type!
     
     @MainActor
     public static func build<T: AppModule>(module: T.Type, route: SampleProyectDispatcherRoutes) -> any View {

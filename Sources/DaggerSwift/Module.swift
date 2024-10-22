@@ -17,10 +17,9 @@ public extension Component {
     static var module: Module.Type { Module.self }
 }
 
-private enum SingletonContainer {
-    nonisolated(unsafe) static var instances: [String: Any] = [:]
+private actor SingletonContainerActor {
+    static var instances: [String: Any] = [:]
     
-    // Método para resolver o crear la instancia de un tipo
     static func resolve<T>(_ type: T.Type, initializer: () -> T) -> T {
         let key = String(describing: T.self)
         if let instance = instances[key] as? T {
@@ -38,9 +37,11 @@ public struct Singleton<T> {
     public var wrappedValue: T
     
     public init(_ wrappedValue: @autoclosure @escaping () -> T) {
-        self.wrappedValue = SingletonContainer.resolve(T.self, initializer: wrappedValue)
+        self.wrappedValue = SingletonContainerActor.resolve(T.self, initializer: wrappedValue)
     }
 }
+
+
 
 @propertyWrapper
 public struct Provider<T> {
