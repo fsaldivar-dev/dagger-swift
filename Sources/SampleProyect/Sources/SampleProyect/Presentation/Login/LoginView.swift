@@ -7,19 +7,20 @@
 
 import SwiftUI
 struct LoginView<T: LoginViewModel>: View {
-    @ObservedObject var model: T
-    
+    @ObservedObject var presenter: T
+    @State var value: String = ""
     init(model: T) {
-        self.model = model
+        self.presenter = model
     }
     
     var body: some View {
         Text("Hello, World!")
-        
+        Text(value)
         Button("Login", action: {
-            model.username = "Saldivar"
-            model.password = "Saldivar"
-            try?  model.onTapLogin()
+            presenter.onTapLogin("Saldivar", "Saldivar")
+            Task {
+                value = await presenter.model.getValue()
+            }
         })
     }
     
