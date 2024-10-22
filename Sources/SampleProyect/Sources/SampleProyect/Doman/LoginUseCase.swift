@@ -15,8 +15,7 @@ actor LoginUseCaseImpl: LoginUseCase {
     init(apiClient: ApiClient) {
         self.apiClient = apiClient
     }
-    
-    
+
     func login(with user: String, password: String) async throws-> String {
         try await self.apiClient.execute(url: "login")
     }

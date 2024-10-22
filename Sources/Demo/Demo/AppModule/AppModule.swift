@@ -7,7 +7,7 @@
 import DaggerSwift
 import SampleProyect
 
-enum AppModuleImpl: AppModule {
+actor AppModuleImpl: AppModule {
     @Provider( DataRepositoryImpl() )
     static var dataRepository: any DataRepository
     
@@ -17,6 +17,6 @@ enum AppModuleImpl: AppModule {
     @Singleton(AnalyticsImpl())
     static var analytics: any Analytics
     
-    @Provider( AppRepositoryImpl(api: Self.appClient) )
+    @Provider(AppRepositoryImpl(api: AppModuleImpl.appClient) )
     static var appRepository: any AppRepository
 }
