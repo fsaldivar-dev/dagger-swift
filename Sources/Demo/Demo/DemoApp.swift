@@ -12,7 +12,7 @@ import SampleProyect
 struct DemoApp: App {
     var body: some Scene {
         WindowGroup {
-            AnyView( SampleStartModule(module: AppModuleImpl.self))
+            AnyView( SampleProyectDispatcher.build(module: AppModuleImpl.self, route: .login))
         }
     }
 }
