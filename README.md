@@ -82,3 +82,8 @@ macOS 10.15+ | iOS 13+ | tvOS 13+ | watchOS 6+ | Mac Catalyst 13+
 ## Licencia
 
 MIT
+
+
+---
+
+> *El conocimiento se pudre cuando se guarda. Se mantiene vivo cuando se comparte.* — [Manifiesto](./MANIFESTO.md)
