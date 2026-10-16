@@ -63,8 +63,15 @@ let package = Package(
             ]
         ),
 
+        // Target de Test 1: Pruebas Unitarias de la App (UseCases y ViewModels)
         .testTarget(
-            name: "SampleProyectTests",
+            name: "AppUnitTests",
+            dependencies: ["SampleProyect"]
+        ),
+
+        // Target de Test 2: Pruebas del Grafo de Dependencias (Precondiciones, Módulos y JSON del Grafo)
+        .testTarget(
+            name: "AppGraphTests",
             dependencies: [
                 "SampleProyect",
                 .product(name: "DaggerSwiftTesting", package: "DaggerSwift")
