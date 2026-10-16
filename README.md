@@ -231,10 +231,9 @@ enum AppModuleImpl: AppModule {
 │   │   │   └── UseCases/                # Casos de Uso: GetProfileUseCase, GetRepositoriesUseCase, etc.
 │   │   ├── Data/                        # Implementaciones de datos y orígenes
 │   │   │   └── Repositories/            # LiveGitHubRepository (REST API), FakerGitHubRepository, AuthSessionRepository
-│   │   ├── DI/                          # Ensamblaje Dagger 2 Declarativo
+│   │   ├── DI/                          # Ensamblaje Dagger 2 Declarativo nativo (ShowcaseCoreModule.buildGraph)
 │   │   │   ├── Modules/                 # ShowcaseCoreModule, LiveGitHubModule, FakerGitHubModule, RepoDetailModule, etc.
-│   │   │   ├── Injectables/             # Clases con @Inject (RepoDetailInspector, PrivateVaultInteractor)
-│   │   │   └── Assembler/               # DaggerShowcaseAssembler (Composition Root del grafo)
+│   │   │   └── Injectables/             # Clases con @Inject (RepoDetailInspector, PrivateVaultInteractor)
 │   │   └── Presentation/                # Capa de Presentación MVVM en SwiftUI
 │   │       ├── Navigation/              # ShowcaseCoordinator (enrutamiento de sheets y captura de unmetPrecondition)
 │   │       ├── Home/                    # ShowcaseRootView, HomeViewModel

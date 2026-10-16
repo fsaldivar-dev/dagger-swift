@@ -3,7 +3,8 @@
 //  SampleProyect
 //
 //  Clean Architecture · Presentation Layer · MVVM ViewModel
-//  Gobierna la telemetría de memoria en tiempo real y el Stress Test de 25 scopes en ráfaga.
+//  Gobierna la telemetría de memoria en tiempo real y el Stress Test de 25 scopes en ráfaga
+//  utilizando directamente la API nativa de DaggerSwift (`ScopeContainer.makeChildScope`).
 //
 
 import Foundation
@@ -12,10 +13,10 @@ import DaggerSwift
 
 @MainActor
 public final class ScopeMonitorViewModel: ObservableObject {
-    private let assembler: DaggerShowcaseAssembler
+    private let container: ScopeContainer
 
-    public init(assembler: DaggerShowcaseAssembler) {
-        self.assembler = assembler
+    public init(container: ScopeContainer) {
+        self.container = container
     }
 
     public func runStressTest(coordinator: ShowcaseCoordinator) {
@@ -23,16 +24,19 @@ public final class ScopeMonitorViewModel: ObservableObject {
         let repo = LiveGitHubRepository.flagshipDaggerRepo
 
         for _ in 0..<25 {
-            if let (scope, _) = try? assembler.openRepositoryScope(for: repo, requiresAuth: false) {
+            let childScope = container.makeChildScope(for: RepoDetailModule.self)
+            childScope.bindInstance(repo)
+            if let inspector = try? RepoDetailInspector.resolve(in: childScope) {
                 coordinator.totalScopesCreated += 1
-                leaksFound += scope.teardown().count
+                _ = consume inspector
+                leaksFound += childScope.teardown().count
                 coordinator.totalScopesTornDown += 1
             }
         }
         coordinator.lastLeakAuditCount = leaksFound
         coordinator.appendLog(
             category: "StressTest",
-            message: "⚡ Stress Test completado: 25 sub-scopes (`RepoDetailModule`) creados y destruidos en ráfaga. Fugas detectadas por WeakObjectBox: \(leaksFound)."
+            message: "⚡ Stress Test completado: 25 sub-scopes (`RepoDetailModule`) creados y destruidos en ráfaga con DaggerSwift. Fugas detectadas por WeakObjectBox: \(leaksFound)."
         )
     }
 }

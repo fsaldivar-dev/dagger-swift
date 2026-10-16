@@ -3,9 +3,9 @@
 //  SampleProyect
 //
 //  Clean Architecture · Presentation Layer · Navigation Coordinator
-//  Separa navegación y presentación del ensamblaje del grafo:
-//  - DaggerShowcaseAssembler: SOLO resuelve el grafo y valida precondiciones.
-//  - ShowcaseCoordinator: Atrapa GraphError.unmetPrecondition y decide qué pantalla/modal presentar.
+//  Usa directamente la API nativa de DaggerSwift (`ScopeContainer`):
+//  - El Grafo (ScopeContainer) resuelve dependencias y valida precondiciones.
+//  - El Coordinador atrapa GraphError.unmetPrecondition y decide qué pantalla/modal presentar.
 //
 
 import Foundation
@@ -36,7 +36,7 @@ public struct ActiveVaultSession: Identifiable {
 
 @MainActor
 public final class ShowcaseCoordinator: ObservableObject {
-    public let assembler: DaggerShowcaseAssembler
+    public let container: ScopeContainer
 
     @Published public var selectedTab: ShowcaseTab = .repositories
 
@@ -55,32 +55,39 @@ public final class ShowcaseCoordinator: ObservableObject {
     @Published public var lastLeakAuditCount: Int = 0
     @Published public var eventLogs: [ScopeEventLog] = []
 
-    public init(assembler: DaggerShowcaseAssembler) {
-        self.assembler = assembler
+    public init(container: ScopeContainer) {
+        self.container = container
         appendLog(
             category: "GlobalScope",
-            message: "Grafo raíz Clean Architecture inicializado con Parameter Packs (Swift 6). Nodos listos: GitHubRepository, ManifestoRepository, ValidatedSession y UseCases."
+            message: "Grafo raíz inicializado con Parameter Packs (Swift 6). Nodos listos: GitHubRepository, ManifestoRepository, ValidatedSession y UseCases."
         )
     }
 
-    // MARK: - Manejo de Scopes de Detalle de Repositorio
+    // MARK: - Manejo de Scopes de Detalle de Repositorio (API DaggerSwift nativa)
 
     public func openRepository(_ repo: GitHubRepoItem, forceProtected: Bool = false) {
         closeActiveRepoDetail()
+        let childScope = container.makeChildScope(for: RepoDetailModule.self)
+        childScope.bindInstance(repo)
+
         do {
-            let result = try assembler.openRepositoryScope(
-                for: repo,
-                requiresAuth: forceProtected || repo.isPrivateVault
-            )
+            let inspector: RepoDetailInspector
+            if forceProtected || repo.isPrivateVault {
+                inspector = try ProtectedRepoAccess.resolve(in: childScope).inspector
+            } else {
+                inspector = try RepoDetailInspector.resolve(in: childScope)
+            }
             totalScopesCreated += 1
-            activeRepoSession = ActiveRepoSession(scope: result.scope, inspector: result.inspector)
+            activeRepoSession = ActiveRepoSession(scope: childScope, inspector: inspector)
             appendLog(
                 category: "RepoDetailModule",
-                message: "🟢 Sub-scope creado en RAM para `\(repo.name)` (\(result.inspector.instanceID), vivos: \(result.scope.activeInstanceCount))."
+                message: "🟢 Sub-scope creado en RAM para `\(repo.name)` (\(inspector.instanceID), vivos: \(childScope.activeInstanceCount))."
             )
         } catch let error as GraphError {
+            childScope.teardown()
             handleGraphError(error, attemptedLink: .repoDetail(name: repo.name, requiresAuth: true))
         } catch {
+            childScope.teardown()
             appendLog(category: "Error", message: error.localizedDescription, isError: true)
         }
     }
@@ -100,21 +107,24 @@ public final class ShowcaseCoordinator: ObservableObject {
         )
     }
 
-    // MARK: - Manejo de Scope de Bóveda Privada
+    // MARK: - Manejo de Scope de Bóveda Privada (API DaggerSwift nativa)
 
     public func openPrivateVault() {
         closePrivateVault()
+        let vaultScope = container.makeChildScope(for: PrivateVaultModule.self)
         do {
-            let result = try assembler.openPrivateVaultScope()
+            let vault = try PrivateVaultInteractor.resolve(in: vaultScope)
             totalScopesCreated += 1
-            activeVaultSession = ActiveVaultSession(scope: result.scope, vault: result.vault)
+            activeVaultSession = ActiveVaultSession(scope: vaultScope, vault: vault)
             appendLog(
                 category: "PrivateVaultModule",
-                message: "🔐 Bóveda privada resuelta exitosamente tras verificar `ValidatedSession` (\(result.vault.instanceID))."
+                message: "🔐 Bóveda privada resuelta exitosamente tras verificar `ValidatedSession` (\(vault.instanceID))."
             )
         } catch let error as GraphError {
+            vaultScope.teardown()
             handleGraphError(error, attemptedLink: .privateVault)
         } catch {
+            vaultScope.teardown()
             appendLog(category: "Error", message: error.localizedDescription, isError: true)
         }
     }
@@ -170,7 +180,7 @@ public final class ShowcaseCoordinator: ObservableObject {
             selectedTab = .manifesto
 
         case .featureFlag(let enableBentoV2):
-            if let useCase = try? assembler.rootContainer.resolve(ToggleExplorerVariantUseCase.self) {
+            if let useCase = try? container.resolve(ToggleExplorerVariantUseCase.self) {
                 useCase.execute(enableBentoV2: enableBentoV2)
             }
             selectedTab = .repositories
