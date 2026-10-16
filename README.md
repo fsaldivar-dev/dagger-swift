@@ -211,7 +211,7 @@ enum AppModuleImpl: AppModule {
 
 ---
 
-## Estructura del Repositorio
+## Estructura del Repositorio y Arquitectura Clean
 
 ```text
 ├── Package.swift                        # Configuración SPM (Swift 6.0, macOS 14+ / iOS 17+, CLI + Macros)
@@ -223,18 +223,30 @@ enum AppModuleImpl: AppModule {
 │   │   └── Module.swift                 # Macros: @Module, @Inject, @Singleton, @Scoped, @Provider, @BusinessRule, @Precondition
 │   ├── DaggerSwiftMacros/               # Compiler Plugin nativo Swift 6 (protocolo JSON HostToPluginMessage sin dependencias)
 │   ├── DaggerCLI/                       # Herramienta de terminal (swift run dagger-cli)
-│   ├── SampleProyect/                   # Showcase Multi-Plataforma (iOS 17+ / macOS 14+):
-│   │   ├── Showcase/                    # Explorador @fsaldivar-dev, Deep Links, Auth Precondition, Manifiesto y Monitor RAM
-│   │   └── Core/                        # Compatibilidad con Dagger 1
-│   └── Demo/                            # Xcode Project con icono universal de la app:
-│       ├── Demo/                        # Target iOS / iPadOS / macOS con Live GitHub API Module
-│       └── DemoFaker/                   # Target iOS / iPadOS / macOS con Faker Offline Deterministic Sandbox
-├── Test/
-│   ├── DaggerMacrosV2Tests.swift        # Suite de pruebas de Macros (@Module, @Inject, @Precondition, @BusinessRule)
-│   ├── GraphEngineV2Tests.swift         # Suite de pruebas del Motor de Grafo (Scopes, Ciclos, Leaks, Concurrencia)
-│   └── ModuleTest.swift                 # Suite de pruebas de DaggerSwift v1
-├── MEMORIA_DAGGER_V1.md                 # Memoria técnica: limitaciones de v1 en producción y diseño de v2
-└── MANIFESTO.md                         # Manifiesto de código abierto (Jonas Salk, Aaron Swartz)
+│   ├── SampleProyect/                   # Showcase Multi-Plataforma Clean Architecture + MVVM:
+│   │   ├── Domain/                      # Reglas de negocio puras (0 frameworks, 0 UI, 0 DI decorators)
+│   │   │   ├── Entities/                # GitHubUserProfile, GitHubRepoItem, ManifestoChapter, ShowcaseDeepLink
+│   │   │   ├── Preconditions/           # ValidatedSession (Token de seguridad exigido por el grafo)
+│   │   │   ├── Repositories/            # Protocolos: GitHubRepositoryProtocol, AuthRepositoryProtocol, etc.
+│   │   │   └── UseCases/                # Casos de Uso: GetProfileUseCase, GetRepositoriesUseCase, etc.
+│   │   ├── Data/                        # Implementaciones de datos y orígenes
+│   │   │   └── Repositories/            # LiveGitHubRepository (REST API), FakerGitHubRepository, AuthSessionRepository
+│   │   ├── DI/                          # Ensamblaje Dagger 2 Declarativo
+│   │   │   ├── Modules/                 # ShowcaseCoreModule, LiveGitHubModule, FakerGitHubModule, RepoDetailModule, etc.
+│   │   │   ├── Injectables/             # Clases con @Inject (RepoDetailInspector, PrivateVaultInteractor)
+│   │   │   └── Assembler/               # DaggerShowcaseAssembler (Composition Root del grafo)
+│   │   └── Presentation/                # Capa de Presentación MVVM en SwiftUI
+│   │       ├── Navigation/              # ShowcaseCoordinator (enrutamiento de sheets y captura de unmetPrecondition)
+│   │       ├── Home/                    # ShowcaseRootView, HomeViewModel
+│   │       ├── Repositories/            # RepoExplorerView, RepoExplorerViewModel, RepoBentoCardView, RepoClassicRowView
+│   │       ├── RepoDetail/              # RepoDetailView, RepoDetailViewModel (Scoped en RepoDetailModule)
+│   │       ├── PrivateVault/            # PrivateVaultView, PrivateVaultViewModel (Protegido por ValidatedSession)
+│   │       ├── DeepLinks/               # DeepLinksLabView, DeepLinksViewModel, AuthPreconditionGateSheet
+│   │       ├── Manifesto/               # ManifestoView, ManifestoViewModel
+│   │       └── ScopeMonitor/            # ScopeMonitorView, ScopeMonitorViewModel (Telemetría RAM y Stress Test)
+│   └── Demo/                            # Aplicación Xcode iOS / iPadOS / macOS con icono universal:
+│       ├── Demo/                        # Target Live conectando con GitHub REST API @fsaldivar-dev
+│       └── DemoFaker/                   # Target Sandbox Offline Determinista
 ```
 
 ---
