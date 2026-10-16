@@ -6,24 +6,40 @@ import CompilerPluginSupport
 
 let package = Package(
     name: "DaggerSwift",
-    platforms: [.macOS(.v10_15), .iOS(.v13), .tvOS(.v13), .watchOS(.v6), .macCatalyst(.v13)],
+    platforms: [.macOS(.v14), .iOS(.v17), .tvOS(.v17), .watchOS(.v10), .macCatalyst(.v17)],
     products: [
-        // Products define the executables and libraries a package produces, making them visible to other packages.
         .library(
             name: "DaggerSwift",
             targets: ["DaggerSwift"]
         ),
+        .executable(
+            name: "dagger-cli",
+            targets: ["DaggerCLI"]
+        ),
     ],
-    
     targets: [
-        // Biblioteca que expone macros como parte de su API
+        // Compiler Plugin nativo (Swift Macros: @Module, @Inject, @Singleton, @Scoped, @Provider, @BusinessRule, @Precondition)
+        .macro(
+            name: "DaggerSwiftMacros",
+            dependencies: [],
+            path: "Sources/DaggerSwiftMacros"
+        ),
+
+        // Biblioteca que expone el motor del grafo y las macros como parte de su API
         .target(
             name: "DaggerSwift",
-            dependencies: [],
+            dependencies: ["DaggerSwiftMacros"],
             path: "Sources/DaggerSwift"
         ),
-        
-        // Target de pruebas para desarrollar la implementación de las macros
+
+        // Herramienta CLI de terminal que demuestra el grafo, macros, perfil @fsaldivar-dev y auditoría de memoria
+        .executableTarget(
+            name: "DaggerCLI",
+            dependencies: ["DaggerSwift"],
+            path: "Sources/DaggerCLI"
+        ),
+
+        // Target de pruebas para validar las macros y el motor de grafo (v1 y v2)
         .testTarget(
             name: "DaggerSwiftTest",
             dependencies: ["DaggerSwift"],
@@ -31,4 +47,3 @@ let package = Package(
         ),
     ]
 )
-

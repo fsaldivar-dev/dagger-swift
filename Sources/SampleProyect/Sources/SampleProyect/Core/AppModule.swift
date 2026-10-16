@@ -7,7 +7,6 @@
 
 import DaggerSwift
 import Foundation
-import UIKit
 import SwiftUI
 
 public protocol AppModule: Modulable {

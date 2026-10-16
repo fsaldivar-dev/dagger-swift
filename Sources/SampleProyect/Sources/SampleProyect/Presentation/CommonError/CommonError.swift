@@ -46,7 +46,6 @@ struct ErrorView: View {
             .padding(.bottom, 40)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(.systemBackground))
         .edgesIgnoringSafeArea(.all)
     }
 }
