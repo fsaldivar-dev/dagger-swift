@@ -18,25 +18,18 @@ public struct ShowcaseRootView: View {
     @StateObject private var manifestoViewModel: ManifestoViewModel
     @StateObject private var scopeMonitorViewModel: ScopeMonitorViewModel
 
-    public init(assembler: DaggerShowcaseAssembler) {
-        let coord = ShowcaseCoordinator(assembler: assembler)
-        _coordinator = StateObject(wrappedValue: coord)
-        _homeViewModel = StateObject(wrappedValue: HomeViewModel(container: assembler.rootContainer))
-        _repoExplorerViewModel = StateObject(wrappedValue: RepoExplorerViewModel(container: assembler.rootContainer))
-        _deepLinksViewModel = StateObject(wrappedValue: DeepLinksViewModel(container: assembler.rootContainer))
-        _manifestoViewModel = StateObject(wrappedValue: ManifestoViewModel(container: assembler.rootContainer))
-        _scopeMonitorViewModel = StateObject(wrappedValue: ScopeMonitorViewModel(assembler: assembler))
+    public init(container: ScopeContainer) {
+        _coordinator = StateObject(wrappedValue: ShowcaseCoordinator(container: container))
+        _homeViewModel = StateObject(wrappedValue: HomeViewModel(container: container))
+        _repoExplorerViewModel = StateObject(wrappedValue: RepoExplorerViewModel(container: container))
+        _deepLinksViewModel = StateObject(wrappedValue: DeepLinksViewModel(container: container))
+        _manifestoViewModel = StateObject(wrappedValue: ManifestoViewModel(container: container))
+        _scopeMonitorViewModel = StateObject(wrappedValue: ScopeMonitorViewModel(container: container))
     }
 
     public init(environment: any GraphModule.Type = LiveGitHubModule.self) {
-        let assembler = DaggerShowcaseAssembler(environment: environment)
-        let coord = ShowcaseCoordinator(assembler: assembler)
-        _coordinator = StateObject(wrappedValue: coord)
-        _homeViewModel = StateObject(wrappedValue: HomeViewModel(container: assembler.rootContainer))
-        _repoExplorerViewModel = StateObject(wrappedValue: RepoExplorerViewModel(container: assembler.rootContainer))
-        _deepLinksViewModel = StateObject(wrappedValue: DeepLinksViewModel(container: assembler.rootContainer))
-        _manifestoViewModel = StateObject(wrappedValue: ManifestoViewModel(container: assembler.rootContainer))
-        _scopeMonitorViewModel = StateObject(wrappedValue: ScopeMonitorViewModel(assembler: assembler))
+        let container = ShowcaseCoreModule.buildGraph(including: [environment])
+        self.init(container: container)
     }
 
     public var body: some View {
