@@ -25,7 +25,7 @@ public struct PrivateVaultView: View {
                         .font(.title)
                         .foregroundStyle(.green)
                     VStack(alignment: .leading) {
-                        Text("Bóveda Privada Desbloqueada")
+                        Text("Módulo Protegido Inicializado")
                             .font(.headline)
                         Text("Precondición `ValidatedSession` verificada para @\(viewModel.username)")
                             .font(.caption)
@@ -47,7 +47,7 @@ public struct PrivateVaultView: View {
                 Button {
                     onClose()
                 } label: {
-                    Label("Cerrar Bóveda y Destruir `PrivateVaultModule` en RAM", systemImage: "xmark.shield.fill")
+                    Label("Cerrar Scope y Destruir `PrivateVaultModule` en RAM", systemImage: "xmark.shield.fill")
                         .font(.subheadline.bold())
                         .frame(maxWidth: .infinity)
                         .padding(12)

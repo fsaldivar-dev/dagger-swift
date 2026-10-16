@@ -11,14 +11,15 @@ import SwiftUI
 import DaggerSwift
 
 @MainActor
+@Inject
 public final class ManifestoViewModel: ObservableObject {
     private let getChaptersUseCase: GetManifestoChaptersUseCase
 
     @Published public var chapters: [ManifestoChapter] = []
     @Published public var selectedChapterID: String = "gigantes"
 
-    public init(container: ScopeContainer) {
-        self.getChaptersUseCase = try! container.resolve(GetManifestoChaptersUseCase.self)
+    public init(getChaptersUseCase: GetManifestoChaptersUseCase) {
+        self.getChaptersUseCase = getChaptersUseCase
         self.chapters = getChaptersUseCase.execute()
     }
 
