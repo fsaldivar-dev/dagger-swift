@@ -4,10 +4,12 @@
 //
 //  Created by Saldivar on 18/10/24.
 //
-import UIKit
+import Foundation
 
+@MainActor
 public protocol Modulable { }
 
+@MainActor
 public protocol Component {
     associatedtype Module: Modulable
     static var module: Module.Type { get }
@@ -17,11 +19,13 @@ public extension Component {
     static var module: Module.Type { Module.self }
 }
 
-private actor SingletonContainerActor {
-    static var instances: [String: Any] = [:]
-    
-    static func resolve<T>(_ type: T.Type, initializer: () -> T) -> T {
-        let key = String(describing: T.self)
+@MainActor
+private final class SingletonContainer {
+    static let shared = SingletonContainer()
+    private var instances: [String: Any] = [:]
+
+    func resolve<T>(_ type: T.Type, initializer: @MainActor () -> T) -> T {
+        let key = String(reflecting: T.self)
         if let instance = instances[key] as? T {
             return instance
         } else {
@@ -30,24 +34,45 @@ private actor SingletonContainerActor {
             return newInstance
         }
     }
-}
 
-@propertyWrapper
-public struct Singleton<T> {
-    public var wrappedValue: T
-    
-    public init(_ wrappedValue: @autoclosure @escaping () -> T) {
-        self.wrappedValue = SingletonContainerActor.resolve(T.self, initializer: wrappedValue)
+    func reset() {
+        instances.removeAll()
     }
 }
 
-
-
+@MainActor
 @propertyWrapper
-public struct Provider<T> {
-    public var wrappedValue: T
-    
-    public init(_ wrappedValue: @autoclosure @escaping () -> T) {
-        self.wrappedValue = wrappedValue()
+public struct Singleton<T>: @unchecked Sendable {
+    private let initializer: @MainActor () -> T
+
+    public var wrappedValue: T {
+        SingletonContainer.shared.resolve(T.self, initializer: initializer)
+    }
+
+    public init(_ wrappedValue: @autoclosure @escaping @MainActor () -> T) {
+        self.initializer = wrappedValue
+    }
+
+    public init(wrappedValue: @autoclosure @escaping @MainActor () -> T) {
+        self.initializer = wrappedValue
     }
 }
+
+@MainActor
+@propertyWrapper
+public struct Provider<T>: @unchecked Sendable {
+    private let factory: @MainActor () -> T
+
+    public var wrappedValue: T {
+        factory()
+    }
+
+    public init(_ wrappedValue: @autoclosure @escaping @MainActor () -> T) {
+        self.factory = wrappedValue
+    }
+
+    public init(wrappedValue: @autoclosure @escaping @MainActor () -> T) {
+        self.factory = wrappedValue
+    }
+}
+

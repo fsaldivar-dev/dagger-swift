@@ -626,7 +626,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.fsaldivar.DemoFaker;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
@@ -655,7 +655,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.fsaldivar.DemoFaker;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
@@ -711,9 +711,9 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		9DAAFAB42CC6FD2D00B48129 /* XCLocalSwiftPackageReference "../../../Dagger-swift" */ = {
+		9DAAFAB42CC6FD2D00B48129 /* XCLocalSwiftPackageReference "../.." */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = "../../../Dagger-swift";
+			relativePath = ../..;
 		};
 		9DAAFADA2CC70DA500B48129 /* XCLocalSwiftPackageReference "../SampleProyect" */ = {
 			isa = XCLocalSwiftPackageReference;

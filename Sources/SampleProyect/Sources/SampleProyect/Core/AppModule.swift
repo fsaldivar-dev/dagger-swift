@@ -23,17 +23,16 @@ public enum SampleProyectDispatcherRoutes {
 }
 
 public actor SampleProyectDispatcher {
-    static var module: AppModule.Type!
+    @MainActor static var module: AppModule.Type!
     
     @MainActor
     public static func build<T: AppModule>(module: T.Type, route: SampleProyectDispatcherRoutes) -> any View {
         Self.module = module
         switch route {
         case .login:
-            LoginComponentImpl<T>.loginView()
+            return LoginComponentImpl<T>.loginView()
         case .error:
-            fatalError("")
+            return ErrorView(errorMessage: "Unable to fetch data. Please check your connection.", onRetry: {})
         }
-        return LoginComponentImpl<T>.loginView()
     }
 }

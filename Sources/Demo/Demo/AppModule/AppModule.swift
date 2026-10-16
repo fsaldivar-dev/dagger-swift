@@ -7,7 +7,7 @@
 import DaggerSwift
 import SampleProyect
 
-actor AppModuleImpl: AppModule {
+enum AppModuleImpl: AppModule {
     @Provider( DataRepositoryImpl() )
     static var dataRepository: any DataRepository
     
