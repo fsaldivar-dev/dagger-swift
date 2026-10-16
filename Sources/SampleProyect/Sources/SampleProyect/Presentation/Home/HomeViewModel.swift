@@ -11,6 +11,7 @@ import SwiftUI
 import DaggerSwift
 
 @MainActor
+@Inject
 public final class HomeViewModel: ObservableObject {
     private let getProfileUseCase: GetProfileUseCase
     private let authenticateUseCase: AuthenticateUseCase
@@ -25,13 +26,20 @@ public final class HomeViewModel: ObservableObject {
     @Published public var isBentoV2Enabled: Bool = true
     @Published public var isLoading: Bool = false
 
-    public init(container: ScopeContainer) {
-        self.getProfileUseCase = try! container.resolve(GetProfileUseCase.self)
-        self.authenticateUseCase = try! container.resolve(AuthenticateUseCase.self)
-        self.logoutUseCase = try! container.resolve(LogoutUseCase.self)
-        self.authRepository = try! container.resolve((any AuthRepositoryProtocol).self)
-        self.toggleVariantUseCase = try! container.resolve(ToggleExplorerVariantUseCase.self)
-        self.gitHubRepository = try! container.resolve((any GitHubRepositoryProtocol).self)
+    public init(
+        getProfileUseCase: GetProfileUseCase,
+        authenticateUseCase: AuthenticateUseCase,
+        logoutUseCase: LogoutUseCase,
+        authRepository: any AuthRepositoryProtocol,
+        toggleVariantUseCase: ToggleExplorerVariantUseCase,
+        gitHubRepository: any GitHubRepositoryProtocol
+    ) {
+        self.getProfileUseCase = getProfileUseCase
+        self.authenticateUseCase = authenticateUseCase
+        self.logoutUseCase = logoutUseCase
+        self.authRepository = authRepository
+        self.toggleVariantUseCase = toggleVariantUseCase
+        self.gitHubRepository = gitHubRepository
 
         self.isAuthenticated = authRepository.isAuthenticated
         self.currentSession = authRepository.currentSession

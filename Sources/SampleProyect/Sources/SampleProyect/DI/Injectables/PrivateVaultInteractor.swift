@@ -27,10 +27,10 @@ public final class PrivateVaultInteractor: ScopeDisposable, @unchecked Sendable 
 
     public var secretKeys: [String] {
         [
-            "DAGGER_SIGNING_KEY_V2 = sha256:9f86d081884c7d659a2feaa0c55ad015",
-            "GITHUB_APP_INSTALLATION = @" + session.username + " #" + session.userID,
-            "ZERO_TRUST_PRECONDITION = ValidatedSession VERIFIED",
-            "ENVIRONMENT_PROVIDER = " + gitHubRepository.environmentTitle
+            "DEMO_MODULE_SCOPE = PrivateVaultModule (Scoped)",
+            "DEMO_PRECONDITION = ValidatedSession VERIFIED",
+            "DEMO_SESSION_USER = @" + session.username + " (#" + session.userID + ")",
+            "DEMO_ENVIRONMENT = " + gitHubRepository.environmentTitle
         ]
     }
 

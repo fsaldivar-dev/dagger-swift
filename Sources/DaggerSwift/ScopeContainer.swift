@@ -265,6 +265,10 @@ public final class ScopeContainer: @unchecked Sendable {
     /// 2. Busca la receta en el Scope actual o subiendo hacia los padres (`parent`).
     /// 3. Si es `@Scoped` o `@Singleton`, sube hasta la caja dueña (`findBoxUpwards`) y resuelve desde ella.
     public func resolve<T>(_ type: T.Type = T.self) throws -> T {
+        if type == ScopeContainer.self, let selfT = self as? T {
+            return selfT
+        }
+
         lock.lock()
         defer { lock.unlock() }
 
@@ -351,6 +355,7 @@ public final class ScopeContainer: @unchecked Sendable {
 
     /// Verifica si existe una receta registrada para `T` en este Scope o en cualquiera de sus padres.
     public func hasRecipe<T>(for type: T.Type) -> Bool {
+        if type == ScopeContainer.self { return true }
         lock.lock()
         defer { lock.unlock() }
         return findRecipeUpwards(for: ObjectIdentifier(type)) != nil

@@ -34,7 +34,7 @@ public enum ShowcaseDeepLink: Equatable, Sendable, Identifiable {
                 ? "daggerswift://repo/\(name)?protected=true"
                 : "daggerswift://repo/\(name)"
         case .privateVault:
-            return "daggerswift://vault/enterprise-secrets"
+            return "daggerswift://vault/protected-scope"
         case .manifesto(let chapterID):
             return "daggerswift://manifesto/\(chapterID)"
         case .featureFlag(let enableBentoV2):
@@ -45,9 +45,9 @@ public enum ShowcaseDeepLink: Equatable, Sendable, Identifiable {
     public var title: String {
         switch self {
         case .repoDetail(let name, let requiresAuth):
-            return requiresAuth ? "🔒 Repo Protegido: \(name)" : "📦 Repo Público: \(name)"
+            return requiresAuth ? "🔒 Sub-Scope con Validación: \(name)" : "📦 Repo Open Source: \(name)"
         case .privateVault:
-            return "🔐 Bóveda Privada (@fsaldivar-dev)"
+            return "🔐 Módulo Protegido (Demostración de Precondition)"
         case .manifesto(let chapterID):
             return "📜 Manifiesto: \(chapterID)"
         case .featureFlag(let enableBentoV2):

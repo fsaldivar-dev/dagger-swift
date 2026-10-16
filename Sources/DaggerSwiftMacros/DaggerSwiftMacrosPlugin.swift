@@ -268,6 +268,23 @@ struct DaggerSwiftMacrosPlugin {
             lines.append("")
         }
 
+        let isClass = clean.contains("class ")
+        let isMainActor = clean.contains("@MainActor")
+        let initModifier = isClass ? "public convenience init" : "public init"
+        let resolveArgs = initParams.map { p in
+            let label = p.externalLabel == "_" ? "" : "\(p.externalLabel): "
+            return "\(label)try container.resolve((\(p.type)).self)"
+        }.joined(separator: ", ")
+
+        lines.append("\(initModifier)(from container: DaggerSwift.ScopeContainer) throws {")
+        if initParams.isEmpty {
+            lines.append("    self.init()")
+        } else {
+            lines.append("    self.init(\(resolveArgs))")
+        }
+        lines.append("}")
+        lines.append("")
+
         let closureParams: String
         let callArgs: String
         if initParams.isEmpty {
@@ -283,14 +300,16 @@ struct DaggerSwiftMacrosPlugin {
             }.joined(separator: ", ")
         }
 
+        let makeInstance = isMainActor ? "MainActor.assumeIsolated { Self(\(callArgs)) }" : "Self(\(callArgs))"
+
         lines.append("nonisolated public static func register(in container: DaggerSwift.ScopeContainer) {")
         if let scopeArg, !scopeArg.isEmpty {
             lines.append("    container.provideScoped(in: \(scopeArg), Self.self) { \(closureParams)")
-            lines.append("        Self(\(callArgs))")
+            lines.append("        \(makeInstance)")
             lines.append("    }")
         } else {
             lines.append("    container.provide(Self.self) { \(closureParams)")
-            lines.append("        Self(\(callArgs))")
+            lines.append("        \(makeInstance)")
             lines.append("    }")
         }
         lines.append("}")

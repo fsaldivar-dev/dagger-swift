@@ -20,7 +20,7 @@ public struct ValidatedSession: Precondition, Sendable, Equatable {
     public init(
         userID: String = "16517868",
         username: String = "fsaldivar-dev",
-        tokenPreview: String = "ghp_daggerV2_99x81a",
+        tokenPreview: String = "mock_session_token_demo",
         role: String = "Owner & Architect",
         authenticatedAt: Date = Date()
     ) {

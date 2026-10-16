@@ -79,13 +79,12 @@ final class LiveCliGitHubService: CliGitHubServiceProtocol {
     func fetchRepos() async throws -> [CliRepo] {
         [
             CliRepo(id: "1", name: "dagger-swift", description: "Motor de Grafo de Dependencias (DAG) en Swift 6 con Macros declarativas (@Module, @Inject).", language: "Swift", stars: 42, isProtected: false),
-            CliRepo(id: "2", name: "dagger-enterprise-vault", description: "Bóveda protegida por Precondition (ValidatedSession). Exige sesión antes de instanciar.", language: "Swift", stars: 19, isProtected: true),
-            CliRepo(id: "3", name: "AutoPilot", description: "Control iOS Simulator directly from the command line. No XCUITest. One binary.", language: "Swift", stars: 28, isProtected: false),
-            CliRepo(id: "4", name: "codaru-mockup", description: "Lightweight mockup editor for existing Tauri apps with design kits and AI CLI.", language: "TypeScript", stars: 15, isProtected: false),
-            CliRepo(id: "5", name: "aru", description: "Editable reference illustrations and AI CLI with resumable icon batch production.", language: "JavaScript", stars: 11, isProtected: false),
-            CliRepo(id: "6", name: "Kairo", description: "Lightweight TypeScript/SVG diagram editor with an optional Tauri 2 plugin.", language: "TypeScript", stars: 14, isProtected: false),
-            CliRepo(id: "7", name: "CodaruPlanning", description: "Local planning and living documentation with Tauri and transactional AI CLI.", language: "TypeScript", stars: 9, isProtected: false),
-            CliRepo(id: "8", name: "sajaru-design", description: "Suite de escritorio para sublimado/DTF — vectorizar y mockups 3D con inferencia ONNX.", language: "TypeScript", stars: 12, isProtected: false)
+            CliRepo(id: "2", name: "AutoPilot", description: "Control iOS Simulator directly from the command line. No XCUITest. One binary.", language: "Swift", stars: 28, isProtected: false),
+            CliRepo(id: "3", name: "codaru-mockup", description: "Lightweight mockup editor for existing Tauri apps with design kits and AI CLI.", language: "TypeScript", stars: 15, isProtected: false),
+            CliRepo(id: "4", name: "aru", description: "Editable reference illustrations and AI CLI with resumable icon batch production.", language: "JavaScript", stars: 11, isProtected: false),
+            CliRepo(id: "5", name: "Kairo", description: "Lightweight TypeScript/SVG diagram editor with an optional Tauri 2 plugin.", language: "TypeScript", stars: 14, isProtected: false),
+            CliRepo(id: "6", name: "CodaruPlanning", description: "Local planning and living documentation with Tauri and transactional AI CLI.", language: "TypeScript", stars: 9, isProtected: false),
+            CliRepo(id: "7", name: "sajaru-design", description: "Suite de escritorio para sublimado/DTF — vectorizar y mockups 3D con inferencia ONNX.", language: "TypeScript", stars: 12, isProtected: false)
         ]
     }
 
@@ -118,8 +117,7 @@ final class FakerCliGitHubService: CliGitHubServiceProtocol {
     func fetchRepos() async throws -> [CliRepo] {
         [
             CliRepo(id: "1", name: "[FAKER] dagger-swift", description: "DAG Engine Swift 6 con Macros.", language: "Swift", stars: 142, isProtected: false),
-            CliRepo(id: "2", name: "[FAKER] dagger-enterprise-vault", description: "Bóveda cifrada protegida por Precondition.", language: "Swift", stars: 119, isProtected: true),
-            CliRepo(id: "3", name: "[FAKER] AutoPilot", description: "Simulador CLI en Swift puro.", language: "Swift", stars: 128, isProtected: false)
+            CliRepo(id: "2", name: "[FAKER] AutoPilot", description: "Simulador CLI en Swift puro.", language: "Swift", stars: 128, isProtected: false)
         ]
     }
 }
@@ -138,7 +136,7 @@ final class CliAuthStore: @unchecked Sendable {
     func login() {
         lock.lock()
         defer { lock.unlock() }
-        session = CliSession(username: "fsaldivar-dev", token: "ghp_dagger_cli_session_99a")
+        session = CliSession(username: "fsaldivar-dev", token: "demo_cli_session")
     }
 
     func logout() {

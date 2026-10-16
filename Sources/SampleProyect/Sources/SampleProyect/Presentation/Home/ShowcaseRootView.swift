@@ -18,18 +18,25 @@ public struct ShowcaseRootView: View {
     @StateObject private var manifestoViewModel: ManifestoViewModel
     @StateObject private var scopeMonitorViewModel: ScopeMonitorViewModel
 
-    public init(container: ScopeContainer) {
-        _coordinator = StateObject(wrappedValue: ShowcaseCoordinator(container: container))
-        _homeViewModel = StateObject(wrappedValue: HomeViewModel(container: container))
-        _repoExplorerViewModel = StateObject(wrappedValue: RepoExplorerViewModel(container: container))
-        _deepLinksViewModel = StateObject(wrappedValue: DeepLinksViewModel(container: container))
-        _manifestoViewModel = StateObject(wrappedValue: ManifestoViewModel(container: container))
-        _scopeMonitorViewModel = StateObject(wrappedValue: ScopeMonitorViewModel(container: container))
+    public init(container: ScopeContainer) throws {
+        let coordinator = ShowcaseCoordinator(container: container)
+        let homeViewModel = try HomeViewModel(from: container)
+        let repoExplorerViewModel = try RepoExplorerViewModel(from: container)
+        let deepLinksViewModel = try DeepLinksViewModel(from: container)
+        let manifestoViewModel = try ManifestoViewModel(from: container)
+        let scopeMonitorViewModel = try ScopeMonitorViewModel(from: container)
+
+        _coordinator = StateObject(wrappedValue: coordinator)
+        _homeViewModel = StateObject(wrappedValue: homeViewModel)
+        _repoExplorerViewModel = StateObject(wrappedValue: repoExplorerViewModel)
+        _deepLinksViewModel = StateObject(wrappedValue: deepLinksViewModel)
+        _manifestoViewModel = StateObject(wrappedValue: manifestoViewModel)
+        _scopeMonitorViewModel = StateObject(wrappedValue: scopeMonitorViewModel)
     }
 
     public init(environment: any GraphModule.Type = LiveGitHubModule.self) {
         let container = ShowcaseCoreModule.buildGraph(including: [environment])
-        self.init(container: container)
+        try! self.init(container: container)
     }
 
     public var body: some View {

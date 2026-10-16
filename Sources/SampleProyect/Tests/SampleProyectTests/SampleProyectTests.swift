@@ -102,22 +102,43 @@ struct SampleProyectShowcaseTests {
         let container = ShowcaseCoreModule.buildGraph(including: [FakerGitHubModule.self])
         let coordinator = ShowcaseCoordinator(container: container)
 
-        let homeVM = HomeViewModel(container: container)
+        let homeVM = try HomeViewModel(from: container)
         await homeVM.loadProfile()
         #expect(homeVM.profile.login == "fsaldivar-dev")
 
-        let repoVM = RepoExplorerViewModel(container: container)
+        let repoVM = try RepoExplorerViewModel(from: container)
         await repoVM.loadRepositories()
         #expect(!repoVM.repositories.isEmpty)
 
-        let deepLinksVM = DeepLinksViewModel(container: container)
+        let deepLinksVM = try DeepLinksViewModel(from: container)
         #expect(!deepLinksVM.presets.isEmpty)
 
-        let manifestoVM = ManifestoViewModel(container: container)
+        let manifestoVM = try ManifestoViewModel(from: container)
         #expect(manifestoVM.chapters.count >= 4)
 
         homeVM.login(coordinator: coordinator)
         #expect(homeVM.isAuthenticated == true)
         #expect(coordinator.eventLogs.contains(where: { $0.category == "Precondition" }))
+    }
+
+    @Test("6. Throwing init(from:) fails cleanly with GraphError when dependency is missing in hierarchy")
+    @MainActor
+    func testViewModelThrowsOnMissingDependency() throws {
+        let emptyContainer = ScopeContainer.root(modules: [])
+        #expect(throws: GraphError.self) {
+            _ = try ManifestoViewModel(from: emptyContainer)
+        }
+        #expect(throws: GraphError.self) {
+            _ = try HomeViewModel(from: emptyContainer)
+        }
+    }
+
+    @Test("7. Pure ViewModel constructor injection for isolated unit testing without container")
+    @MainActor
+    func testPureConstructorInjection() {
+        let fakeRepo = ManifestoLocalRepository()
+        let useCase = GetManifestoChaptersUseCase(manifestoRepository: fakeRepo)
+        let vm = ManifestoViewModel(getChaptersUseCase: useCase)
+        #expect(vm.chapters.count >= 4)
     }
 }

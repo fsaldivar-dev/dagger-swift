@@ -11,6 +11,7 @@ import SwiftUI
 import DaggerSwift
 
 @MainActor
+@Inject
 public final class RepoExplorerViewModel: ObservableObject {
     private let getRepositoriesUseCase: GetRepositoriesUseCase
     private let toggleVariantUseCase: ToggleExplorerVariantUseCase
@@ -21,18 +22,16 @@ public final class RepoExplorerViewModel: ObservableObject {
     @Published public var isLoading: Bool = false
     @Published public var currentStrategy: any RepoExplorerStrategyProtocol
 
-    public init(container: ScopeContainer) {
+    public init(
+        getRepositoriesUseCase: GetRepositoriesUseCase,
+        toggleVariantUseCase: ToggleExplorerVariantUseCase,
+        currentStrategy: any RepoExplorerStrategyProtocol,
+        container: ScopeContainer
+    ) {
+        self.getRepositoriesUseCase = getRepositoriesUseCase
+        self.toggleVariantUseCase = toggleVariantUseCase
+        self.currentStrategy = currentStrategy
         self.container = container
-        self.getRepositoriesUseCase = try! container.resolve(GetRepositoriesUseCase.self)
-        self.toggleVariantUseCase = try! container.resolve(ToggleExplorerVariantUseCase.self)
-
-        if let strategy = try? container.resolve((any RepoExplorerStrategyProtocol).self) {
-            self.currentStrategy = strategy
-        } else {
-            self.currentStrategy = ClassicRepoExplorerStrategy(
-                repository: try! container.resolve((any GitHubRepositoryProtocol).self)
-            )
-        }
     }
 
     public var filteredRepositories: [GitHubRepoItem] {

@@ -12,6 +12,7 @@ import SwiftUI
 import DaggerSwift
 
 @MainActor
+@Inject
 public final class ScopeMonitorViewModel: ObservableObject {
     private let container: ScopeContainer
 

@@ -102,7 +102,7 @@ public final class LiveGitHubRepository: GitHubRepositoryProtocol, Sendable {
                     openIssues: dto.open_issues_count,
                     htmlURL: dto.html_url,
                     defaultBranch: dto.default_branch ?? "main",
-                    isPrivateVault: dto.name.lowercased().contains("vault"),
+                    isPrivateVault: false,
                     sizeKB: dto.size ?? 1024,
                     licenseName: dto.license?.spdx_id ?? "MIT",
                     architectureNotes: enrichment.architectureNotes,
@@ -117,7 +117,6 @@ public final class LiveGitHubRepository: GitHubRepositoryProtocol, Sendable {
                 mapped.insert(item, at: 0)
             }
 
-            mapped.insert(Self.privateVaultRepo, at: 1)
             return mapped
         } catch {
             return Self.curatedRepositories
@@ -153,34 +152,8 @@ public final class LiveGitHubRepository: GitHubRepositoryProtocol, Sendable {
         ]
     )
 
-    public static let privateVaultRepo = GitHubRepoItem(
-        id: 99999901,
-        name: "dagger-enterprise-vault",
-        fullName: "fsaldivar-dev/dagger-enterprise-vault",
-        description: "🔒 Bóveda protegida por Precondition (ValidatedSession). Requiere sesión activa antes de que el grafo instancie el módulo.",
-        language: "Swift",
-        stars: 19,
-        forks: 2,
-        openIssues: 0,
-        htmlURL: "https://github.com/fsaldivar-dev/dagger-swift",
-        defaultBranch: "main",
-        isPrivateVault: true,
-        sizeKB: 1280,
-        licenseName: "Enterprise-Protected",
-        architectureNotes: """
-        Este nodo del grafo exige `ValidatedSession.self` como parámetro en su constructor.
-        Si un Deep Link intenta abrirlo sin sesión activa, `ScopeContainer` aborta la construcción con `GraphError.unmetPrecondition` antes de reservar memoria.
-        """,
-        sampleFiles: [
-            "Vault/ZeroTrustGraphModule.swift",
-            "Vault/SessionPreconditionGuard.swift",
-            "Vault/EncryptedKeysStore.swift"
-        ]
-    )
-
     public static let curatedRepositories: [GitHubRepoItem] = [
         flagshipDaggerRepo,
-        privateVaultRepo,
         GitHubRepoItem(
             id: 1198459556,
             name: "AutoPilot",

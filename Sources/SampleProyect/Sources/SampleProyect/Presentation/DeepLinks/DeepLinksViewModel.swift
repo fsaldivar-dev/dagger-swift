@@ -11,6 +11,7 @@ import SwiftUI
 import DaggerSwift
 
 @MainActor
+@Inject
 public final class DeepLinksViewModel: ObservableObject {
     private let authRepository: any AuthRepositoryProtocol
     private let authenticateUseCase: AuthenticateUseCase
@@ -26,10 +27,14 @@ public final class DeepLinksViewModel: ObservableObject {
         .featureFlag(enableBentoV2: true)
     ]
 
-    public init(container: ScopeContainer) {
-        self.authRepository = try! container.resolve((any AuthRepositoryProtocol).self)
-        self.authenticateUseCase = try! container.resolve(AuthenticateUseCase.self)
-        self.logoutUseCase = try! container.resolve(LogoutUseCase.self)
+    public init(
+        authRepository: any AuthRepositoryProtocol,
+        authenticateUseCase: AuthenticateUseCase,
+        logoutUseCase: LogoutUseCase
+    ) {
+        self.authRepository = authRepository
+        self.authenticateUseCase = authenticateUseCase
+        self.logoutUseCase = logoutUseCase
     }
 
     public var isAuthenticated: Bool {

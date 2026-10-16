@@ -121,11 +121,27 @@ struct DaggerMacrosV2Tests {
         #expect(vm1 !== vm2)              // @Inject sin scope = transient
         #expect(vm1.repo === vm2.repo)    // @Inject(scope:) = compartido en el módulo
 
-        weak var weakRepo = vm1.repo
+        weak let weakRepo: MacroLoansRepository? = vm1.repo
         _ = consume vm1
         _ = consume vm2
         let leaks = loans.teardown()
         #expect(leaks.isEmpty)
         #expect(weakRepo == nil)
+    }
+
+    @Test("@Inject genera init(from container:) throws que propaga errores si falta una dependencia")
+    func injectGeneratesThrowingContainerInit() throws {
+        let graph = MacroCoreModule.buildGraph()
+        let loans = graph.makeChildScope(for: MacroLoansModule.self)
+
+        // Sin sesión, falla lanzando GraphError.unmetPrecondition
+        #expect(throws: GraphError.self) {
+            _ = try MacroLoansViewModel(from: loans)
+        }
+
+        // Con sesión, se inicializa exitosamente a través del throwing init
+        try graph.resolve(MacroAuthStore.self).token = "abc"
+        let vm = try MacroLoansViewModel(from: loans)
+        #expect(vm.repo.session.token == "abc")
     }
 }
