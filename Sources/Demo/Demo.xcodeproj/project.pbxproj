@@ -259,7 +259,7 @@
 			mainGroup = 9DAAFA682CC6FB8E00B48129;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				9DAAFAB42CC6FD2D00B48129 /* XCLocalSwiftPackageReference "../../../Dagger-swift" */,
+				9DAAFAB42CC6FD2D00B48129 /* XCLocalSwiftPackageReference "../.." */,
 				9DAAFADA2CC70DA500B48129 /* XCLocalSwiftPackageReference "../SampleProyect" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -732,7 +732,7 @@
 		};
 		9DB6D9A12CC71BBE001668B8 /* DaggerSwift */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 9DAAFAB42CC6FD2D00B48129 /* XCLocalSwiftPackageReference "../../../Dagger-swift" */;
+			package = 9DAAFAB42CC6FD2D00B48129 /* XCLocalSwiftPackageReference "../.." */;
 			productName = DaggerSwift;
 		};
 		9DB6D9A32CC71BCC001668B8 /* SampleProyect */ = {

@@ -2,20 +2,16 @@
 //  ContentView.swift
 //  DemoFaker
 //
-//  Created by Saldivar on 21/10/24.
+//  Clean Architecture + MVVM + DaggerSwift v2 Sandbox Showcase
 //
 
 import SwiftUI
+import DaggerSwift
+import SampleProyect
 
 struct ContentView: View {
     var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
-        }
-        .padding()
+        ShowcaseRootView(environment: FakerGitHubModule.self)
     }
 }
 
