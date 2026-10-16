@@ -3,11 +3,12 @@
 //  DaggerSwift
 //
 //  Created by Saldivar on 18/10/24.
+//  Evolved to DaggerSwift v2 (Declarative Macros + DAG Engine) on 16/10/26.
 //
 import Foundation
 
 @MainActor
-public protocol Modulable { }
+public protocol Modulable: GraphScope { }
 
 @MainActor
 public protocol Component {
@@ -20,11 +21,13 @@ public extension Component {
 }
 
 @MainActor
-private final class SingletonContainer {
-    static let shared = SingletonContainer()
+public final class SingletonContainer {
+    public static let shared = SingletonContainer()
     private var instances: [String: Any] = [:]
 
-    func resolve<T>(_ type: T.Type, initializer: @MainActor () -> T) -> T {
+    public init() {}
+
+    public func resolve<T>(_ type: T.Type, initializer: @MainActor () -> T) -> T {
         let key = String(reflecting: T.self)
         if let instance = instances[key] as? T {
             return instance
@@ -35,44 +38,104 @@ private final class SingletonContainer {
         }
     }
 
-    func reset() {
+    public func reset() {
         instances.removeAll()
     }
 }
 
-@MainActor
-@propertyWrapper
-public struct Singleton<T>: @unchecked Sendable {
-    private let initializer: @MainActor () -> T
+// MARK: - DaggerSwift v1 & v2 Unified Macros
 
-    public var wrappedValue: T {
-        SingletonContainer.shared.resolve(T.self, initializer: initializer)
-    }
+/// Dagger 1: `@Singleton(MyServiceImpl()) static var myService: MyService`
+@attached(accessor)
+public macro Singleton<T>(_ wrappedValue: @autoclosure @escaping @MainActor () -> T) = #externalMacro(
+    module: "DaggerSwiftMacros",
+    type: "LegacySingletonAccessorMacro"
+)
 
-    public init(_ wrappedValue: @autoclosure @escaping @MainActor () -> T) {
-        self.initializer = wrappedValue
-    }
+/// Dagger 1 (sintaxis original con etiqueta): `@Singleton(wrappedValue: MyServiceImpl())`
+@attached(accessor)
+public macro Singleton<T>(wrappedValue: @autoclosure @escaping @MainActor () -> T) = #externalMacro(
+    module: "DaggerSwiftMacros",
+    type: "LegacySingletonAccessorMacro"
+)
 
-    public init(wrappedValue: @autoclosure @escaping @MainActor () -> T) {
-        self.initializer = wrappedValue
-    }
-}
+/// Dagger 1 (sintaxis original con etiqueta): `@Provider(wrappedValue: OtherServiceImpl())`
+@attached(accessor)
+public macro Provider<T>(wrappedValue: @autoclosure @escaping @MainActor () -> T) = #externalMacro(
+    module: "DaggerSwiftMacros",
+    type: "LegacyProviderAccessorMacro"
+)
 
-@MainActor
-@propertyWrapper
-public struct Provider<T>: @unchecked Sendable {
-    private let factory: @MainActor () -> T
+/// Dagger 2: `@Singleton static func apiClient() -> any ApiClient` dentro de `@Module`
+@attached(peer)
+public macro Singleton() = #externalMacro(
+    module: "DaggerSwiftMacros",
+    type: "PeerMarkerMacro"
+)
 
-    public var wrappedValue: T {
-        factory()
-    }
+/// Dagger 1: `@Provider(OtherServiceImpl()) static var otherService: OtherService`
+@attached(accessor)
+public macro Provider<T>(_ wrappedValue: @autoclosure @escaping @MainActor () -> T) = #externalMacro(
+    module: "DaggerSwiftMacros",
+    type: "LegacyProviderAccessorMacro"
+)
 
-    public init(_ wrappedValue: @autoclosure @escaping @MainActor () -> T) {
-        self.factory = wrappedValue
-    }
+/// Dagger 2: `@Provider static func useCase(...) -> UseCase` dentro de `@Module`
+@attached(peer)
+public macro Provider() = #externalMacro(
+    module: "DaggerSwiftMacros",
+    type: "PeerMarkerMacro"
+)
 
-    public init(wrappedValue: @autoclosure @escaping @MainActor () -> T) {
-        self.factory = wrappedValue
-    }
-}
+/// Dagger 2: Ata una dependencia al Scope del `@Module` donde está declarada.
+@attached(peer)
+public macro Scoped() = #externalMacro(
+    module: "DaggerSwiftMacros",
+    type: "PeerMarkerMacro"
+)
 
+/// Dagger 2: Ata una dependencia a un `GraphScope` o `Precondition` explícito (ej. `@Scoped(ValidatedSession.self)`).
+@attached(peer)
+public macro Scoped<S: GraphScope>(_ scope: S.Type) = #externalMacro(
+    module: "DaggerSwiftMacros",
+    type: "PeerMarkerMacro"
+)
+
+/// Dagger 2: Declara un Nodo de Regla de Negocio (Feature Flag / migración progresiva A -> B) en el grafo.
+@attached(peer)
+public macro BusinessRule() = #externalMacro(
+    module: "DaggerSwiftMacros",
+    type: "PeerMarkerMacro"
+)
+
+/// Dagger 2: Declara un Nodo de Precondición (ej. `ValidatedSession`) que bloquea el sub-grafo si no se cumple.
+@attached(peer)
+public macro Precondition(_ reason: String = "Precondición requerida no satisfecha") = #externalMacro(
+    module: "DaggerSwiftMacros",
+    type: "PeerMarkerMacro"
+)
+
+/// Dagger 2: Convierte una estructura o enumeración en un Módulo del Grafo (`GraphScope`, `GraphModule`, `Modulable`)
+/// y genera en tiempo de compilación el registro topológico de sus nodos `@Singleton`, `@Scoped`, `@Provider`, `@BusinessRule` y `@Precondition`.
+@attached(member, names: arbitrary)
+@attached(extension, conformances: GraphScope, GraphModule, Modulable, names: arbitrary)
+public macro Module() = #externalMacro(
+    module: "DaggerSwiftMacros",
+    type: "ModuleMacro"
+)
+
+/// Dagger 2: Genera automáticamente el `init` limpio (para Unit Tests sin grafo) y el cableado de resolución en el grafo.
+@attached(member, names: arbitrary)
+@attached(extension, conformances: Injectable, names: arbitrary)
+public macro Inject() = #externalMacro(
+    module: "DaggerSwiftMacros",
+    type: "InjectMacro"
+)
+
+/// Dagger 2: Genera automáticamente el `init` limpio y ata el ciclo de vida de la clase al Scope indicado (`@Inject(scope: RepoDetailModule.self)`).
+@attached(member, names: arbitrary)
+@attached(extension, conformances: Injectable, names: arbitrary)
+public macro Inject<S: GraphScope>(scope: S.Type) = #externalMacro(
+    module: "DaggerSwiftMacros",
+    type: "InjectMacro"
+)

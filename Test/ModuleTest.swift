@@ -41,10 +41,10 @@ protocol AppComponent: Component {}
 
 
 enum AppModuleImpl: AppModule {
-    @Provider(wrappedValue: .init())
+    @Provider(wrappedValue: ApiService())
     static var apiService: ApiService
 
-    @Singleton(wrappedValue: .init(apiService: apiService))
+    @Singleton(wrappedValue: AnalisiRepository(apiService: apiService))
     static var analisisRepository: AnalisiRepository
     
     static func provideUserRepository(apiService: ApiService) -> UserRepository {
