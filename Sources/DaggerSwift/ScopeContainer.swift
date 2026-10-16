@@ -55,7 +55,48 @@ private struct WeakScopeContainer {
 private struct GraphRecipe {
     let typeName: String
     let lifetime: NodeLifetime
+    let dependencies: [String]
     let build: (ScopeContainer) throws -> Any
+}
+
+/// Snapshot serializable (JSON) de un nodo registrado en el grafo para inspección en tests.
+public struct GraphNodeSnapshot: Codable, Sendable, Equatable {
+    public let type: String
+    public let kind: String
+    public let ownerScope: String
+    public let isInstantiated: Bool
+    public let dependencies: [String]
+
+    public init(type: String, kind: String, ownerScope: String, isInstantiated: Bool, dependencies: [String]) {
+        self.type = type
+        self.kind = kind
+        self.ownerScope = ownerScope
+        self.isInstantiated = isInstantiated
+        self.dependencies = dependencies
+    }
+}
+
+/// Snapshot jerárquico serializable (JSON) de un ScopeContainer y sus hijos.
+public struct GraphScopeSnapshot: Codable, Sendable, Equatable {
+    public let scope: String
+    public let isTornDown: Bool
+    public let activeInstanceCount: Int
+    public let nodes: [GraphNodeSnapshot]
+    public let children: [GraphScopeSnapshot]
+
+    public init(
+        scope: String,
+        isTornDown: Bool,
+        activeInstanceCount: Int,
+        nodes: [GraphNodeSnapshot],
+        children: [GraphScopeSnapshot]
+    ) {
+        self.scope = scope
+        self.isTornDown = isTornDown
+        self.activeInstanceCount = activeInstanceCount
+        self.nodes = nodes
+        self.children = children
+    }
 }
 
 /// Motor del Grafo y Contenedor Jerárquico de Scopes (`Global` -> `Session` -> `Module`).
@@ -86,6 +127,9 @@ public final class ScopeContainer: @unchecked Sendable {
     /// Pila compartida en la raíz para detectar ciclos de dependencias (`A -> B -> A`).
     private var resolutionStack: [ObjectIdentifier] = []
     private var resolutionNames: [String] = []
+
+    /// Último camino de resolución donde ocurrió un error (para diagnóstico en `DaggerSwiftTesting`).
+    private var lastFailurePath: [String] = []
 
     /// Indica si este contenedor ya fue cerrado mediante `teardown()`.
     public private(set) var isTornDown: Bool = false
@@ -238,9 +282,13 @@ public final class ScopeContainer: @unchecked Sendable {
 
         let key = ObjectIdentifier(type)
         let typeName = String(reflecting: type)
+        var depNames: [String] = []
+        repeat depNames.append(String(reflecting: (each D).self))
+
         recipes[key] = GraphRecipe(
             typeName: typeName,
             lifetime: .precondition(P.scopeID),
+            dependencies: depNames,
             build: { resolver in
                 let result: P?
                 do {
@@ -276,9 +324,14 @@ public final class ScopeContainer: @unchecked Sendable {
         let typeName = String(reflecting: type)
         let rootBox = self.rootContainer
 
+        if rootBox.resolutionStack.isEmpty {
+            rootBox.lastFailurePath.removeAll()
+        }
+
         // 1. Detección de ciclos en el grafo
         if rootBox.resolutionStack.contains(key) {
             let cycleChain = rootBox.resolutionNames + [typeName]
+            rootBox.lastFailurePath = cycleChain
             throw GraphError.circularDependency(chain: cycleChain)
         }
 
@@ -288,6 +341,7 @@ public final class ScopeContainer: @unchecked Sendable {
             injectable.register(in: self)
         }
         guard let (_, recipe) = findRecipeUpwards(for: key) else {
+            rootBox.lastFailurePath = rootBox.resolutionNames + [typeName]
             throw GraphError.unregisteredDependency(type: typeName, searchedFromScope: self.scopeID)
         }
 
@@ -304,6 +358,7 @@ public final class ScopeContainer: @unchecked Sendable {
         case .scoped(let targetScopeID):
             // Subir desde el contenedor actual para encontrar la caja dueña del Scope
             guard let ownerBox = findBoxUpwards(matching: targetScopeID), !ownerBox.isTornDown else {
+                rootBox.lastFailurePath = rootBox.resolutionNames + [typeName]
                 throw GraphError.scopeNotActive(
                     requestedScope: targetScopeID,
                     currentScope: self.scopeID,
@@ -344,6 +399,63 @@ public final class ScopeContainer: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return instances.count
+    }
+
+    /// Devuelve el rastro exacto de tipos recorridos en la última resolución fallida.
+    public var lastFailureTrace: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return rootContainer.lastFailurePath
+    }
+
+    /// Genera un snapshot jerárquico completo (serializable a JSON) de este contenedor y sus sub-scopes.
+    public func snapshot() -> GraphScopeSnapshot {
+        lock.lock()
+        defer { lock.unlock() }
+
+        let nodeSnapshots: [GraphNodeSnapshot] = recipes.map { key, recipe in
+            let kindLabel: String
+            let ownerScopeLabel: String
+            let instantiated: Bool
+
+            switch recipe.lifetime {
+            case .transient:
+                kindLabel = "@Provider"
+                ownerScopeLabel = self.scopeID.name
+                instantiated = false
+            case .businessRule:
+                kindLabel = "@BusinessRule"
+                ownerScopeLabel = self.scopeID.name
+                instantiated = false
+            case .precondition(let s):
+                kindLabel = "@Precondition"
+                ownerScopeLabel = s.name
+                instantiated = false
+            case .scoped(let s):
+                kindLabel = (s == GlobalScope.scopeID) ? "@Singleton" : "@Scoped"
+                ownerScopeLabel = s.name
+                let box = findBoxUpwards(matching: s) ?? self
+                instantiated = box.instances[key] != nil
+            }
+
+            return GraphNodeSnapshot(
+                type: recipe.typeName,
+                kind: kindLabel,
+                ownerScope: ownerScopeLabel,
+                isInstantiated: instantiated,
+                dependencies: recipe.dependencies
+            )
+        }.sorted { $0.type < $1.type }
+
+        let childSnapshots = children.compactMap { $0.value?.snapshot() }
+
+        return GraphScopeSnapshot(
+            scope: scopeID.name,
+            isTornDown: isTornDown,
+            activeInstanceCount: instances.count,
+            nodes: nodeSnapshots,
+            children: childSnapshots
+        )
     }
 
     /// Verifica si un tipo específico ya fue instanciado en esta caja (útil para probar inicialización Lazy).
@@ -437,9 +549,13 @@ public final class ScopeContainer: @unchecked Sendable {
 
         let key = ObjectIdentifier(type)
         let typeName = String(reflecting: type)
+        var depNames: [String] = []
+        repeat depNames.append(String(reflecting: (each D).self))
+
         recipes[key] = GraphRecipe(
             typeName: typeName,
             lifetime: lifetime,
+            dependencies: depNames,
             build: { resolver in
                 try factory(repeat try resolver.resolve((each D).self))
             }
@@ -458,7 +574,14 @@ public final class ScopeContainer: @unchecked Sendable {
             root.resolutionStack.removeLast()
             root.resolutionNames.removeLast()
         }
-        return try operation()
+        do {
+            return try operation()
+        } catch {
+            if root.lastFailurePath.isEmpty {
+                root.lastFailurePath = root.resolutionNames
+            }
+            throw error
+        }
     }
 
     private func trackForLeaksIfNeeded(_ instance: Any, typeName: String) {

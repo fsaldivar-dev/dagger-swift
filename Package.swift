@@ -12,6 +12,10 @@ let package = Package(
             name: "DaggerSwift",
             targets: ["DaggerSwift"]
         ),
+        .library(
+            name: "DaggerSwiftTesting",
+            targets: ["DaggerSwiftTesting"]
+        ),
         .executable(
             name: "dagger-cli",
             targets: ["DaggerCLI"]
@@ -32,6 +36,13 @@ let package = Package(
             path: "Sources/DaggerSwift"
         ),
 
+        // Sub-target oficial de Testing (Tags de Swift Testing, Snapshots JSON, Diagramas y Comparativas de Fallo)
+        .target(
+            name: "DaggerSwiftTesting",
+            dependencies: ["DaggerSwift"],
+            path: "Sources/DaggerSwiftTesting"
+        ),
+
         // Herramienta CLI de terminal que demuestra el grafo, macros, perfil @fsaldivar-dev y auditoría de memoria
         .executableTarget(
             name: "DaggerCLI",
@@ -42,7 +53,7 @@ let package = Package(
         // Target de pruebas para validar las macros y el motor de grafo (v1 y v2)
         .testTarget(
             name: "DaggerSwiftTest",
-            dependencies: ["DaggerSwift"],
+            dependencies: ["DaggerSwift", "DaggerSwiftTesting"],
             path: "Test"
         ),
     ]

@@ -65,7 +65,10 @@ let package = Package(
 
         .testTarget(
             name: "SampleProyectTests",
-            dependencies: ["SampleProyect"]
+            dependencies: [
+                "SampleProyect",
+                .product(name: "DaggerSwiftTesting", package: "DaggerSwift")
+            ]
         ),
     ]
 )
