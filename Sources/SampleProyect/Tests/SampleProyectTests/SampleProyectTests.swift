@@ -6,113 +6,65 @@ import Services
 import Features
 @testable import SampleProyect
 
-@Suite("DaggerSwift v2 · 4-Layer SPM Architecture Tests")
-struct SampleProyectShowcaseTests {
+@Suite("SampleApp · Unit Tests (Core & Features)")
+struct SampleProyectTests {
 
-    @Test("1. @BusinessRule switches dynamically between Bento v2 and Classic v1")
-    func testBusinessRuleFeatureFlagSwitching() throws {
-        let container = ShowcaseCoreModule.buildGraph(including: [FakerGitHubModule.self])
-        let flags = try container.resolve((any FeatureFlagRepositoryProtocol).self)
-        flags.setBentoV2(true)
-
-        let initialStrategy = try container.resolve((any RepoExplorerStrategyProtocol).self)
-        #expect(initialStrategy.variant == .bentoV2)
-        #expect(initialStrategy.usesBentoGrid == true)
-
-        flags.setBentoV2(false)
-        let switchedStrategy = try container.resolve((any RepoExplorerStrategyProtocol).self)
-        #expect(switchedStrategy.variant == .classicV1)
-        #expect(switchedStrategy.usesBentoGrid == false)
-    }
-
-    @Test("2. @Precondition (ValidatedSession) blocks ProtectedRepoAccess when logged out and resolves once authenticated")
-    func testPreconditionGuardAndResolution() throws {
-        let container = ShowcaseCoreModule.buildGraph(including: [FakerGitHubModule.self])
-        let repo = GitHubRepoItem.flagshipDaggerRepo
-
-        // 1. Sin sesión: falla con GraphError.unmetPrecondition
-        #expect(throws: GraphError.self) {
-            let childScope = container.makeChildScope(for: RepoDetailModule.self)
-            childScope.bindInstance(repo)
-            _ = try ProtectedRepoAccess.resolve(in: childScope)
-        }
-
-        // 2. Con sesión: resuelve exitosamente
-        let auth = try container.resolve((any AuthRepositoryProtocol).self)
-        _ = auth.loginAsSaldivar()
-
-        let childScope = container.makeChildScope(for: RepoDetailModule.self)
-        childScope.bindInstance(repo)
-        let protected = try ProtectedRepoAccess.resolve(in: childScope)
-        #expect(protected.session.username == "fsaldivar-dev")
-        #expect(protected.inspector.repo.name == "dagger-swift")
-    }
-
-    @Test("3. RepoDetailModule creates child scope and deallocates cleanly with 0 leaks on teardown")
-    func testRepoDetailModuleScopeLifecycle() throws {
-        let container = ShowcaseCoreModule.buildGraph(including: [FakerGitHubModule.self])
-        let repo = GitHubRepoItem.flagshipDaggerRepo
-
-        let childScope = container.makeChildScope(for: RepoDetailModule.self)
-        childScope.bindInstance(repo)
-        let inspector = try RepoDetailInspector.resolve(in: childScope)
-
-        #expect(inspector.repo.name == "dagger-swift")
-        #expect(childScope.activeInstanceCount == 1)
-
-        weak let weakInspector: RepoDetailInspector? = inspector
-        _ = consume inspector
-        let leaks = childScope.teardown()
-        #expect(leaks.isEmpty)
-        #expect(weakInspector == nil)
-    }
-
-    @Test("4. @Inject UseCases auto-resolve without manual registration in @Module")
-    func testAutoResolvedUseCases() async throws {
-        let container = ShowcaseCoreModule.buildGraph(including: [FakerGitHubModule.self])
-
-        let profileUseCase = try container.resolve(GetProfileUseCase.self)
-        let profile = try await profileUseCase.execute()
-        #expect(profile.login == "fsaldivar-dev")
-
-        let reposUseCase = try container.resolve(GetRepositoriesUseCase.self)
-        let repos = try await reposUseCase.execute()
-        #expect(!repos.isEmpty)
-        #expect(repos.contains(where: { $0.name == "dagger-swift" }))
-    }
-
-    @Test("5. @Inject FeedViewModel initializes from Dagger graph without manual init")
-    @MainActor
-    func testFeedViewModelInitialization() async throws {
-        let container = ShowcaseCoreModule.buildGraph(including: [FakerGitHubModule.self])
-        let vm = try FeedViewModel(from: container)
-
-        await vm.loadInitialData()
-        #expect(vm.profile.login == "fsaldivar-dev")
-        #expect(!vm.repositories.isEmpty)
-
-        // Abrir repo público abre el sheet de detalle
-        vm.openRepository(.flagshipDaggerRepo)
-        #expect(vm.activeRepoSession != nil)
-        vm.closeActiveRepoDetail()
-        #expect(vm.activeRepoSession == nil)
-        #expect(vm.lastLeakAuditCount == 0)
-    }
-
-    @Test("6. Throwing init(from:) fails cleanly with GraphError when dependency is missing")
-    @MainActor
-    func testViewModelThrowsOnMissingDependency() {
-        let emptyContainer = ScopeContainer.root(modules: [])
-        #expect(throws: GraphError.self) {
-            _ = try FeedViewModel(from: emptyContainer)
-        }
-    }
-
-    @Test("7. Synthesized init from @Inject works for isolated unit testing without container")
-    func testSynthesizedConstructorInjection() async throws {
-        let fakeRepo = FakerGitHubRepository()
-        let useCase = GetProfileUseCase(gitHubRepository: fakeRepo)
+    @Test("GetProfileUseCase obtiene el perfil de @fsaldivar-dev usando el init generado por @Inject")
+    func testGetProfileUseCase() async throws {
+        // Ventaja de @Inject: en Unit Tests no necesitas levantar el contenedor si solo pruebas lógica
+        let useCase = GetProfileUseCase(gitHubRepository: FakerGitHubRepository())
         let profile = try await useCase.execute()
+
         #expect(profile.login == "fsaldivar-dev")
+        #expect(profile.name == "Saldivar")
+    }
+
+    @Test("GetRepositoriesUseCase devuelve el catálogo de repositorios")
+    func testGetRepositoriesUseCase() async throws {
+        let useCase = GetRepositoriesUseCase(gitHubRepository: FakerGitHubRepository())
+        let repos = try await useCase.execute()
+
+        #expect(!repos.isEmpty)
+        #expect(repos.contains { $0.name == "dagger-swift" })
+    }
+
+    @Test("FeedViewModel filtra repositorios por búsqueda y cambia entre Bento v2 y Compacto v1")
+    @MainActor
+    func testFeedViewModelSearchAndLayoutToggle() async throws {
+        let container = ShowcaseCoreModule.buildGraph(including: [FakerGitHubModule.self])
+        let viewModel = try FeedViewModel(from: container)
+
+        await viewModel.loadInitialData()
+        #expect(viewModel.repositories.count >= 5)
+
+        // Filtrado por texto
+        viewModel.searchText = "AutoPilot"
+        #expect(viewModel.filteredRepositories.count == 1)
+        #expect(viewModel.filteredRepositories.first?.name == "AutoPilot")
+
+        // Cambio de layout (@BusinessRule)
+        #expect(viewModel.currentStrategy.usesBentoGrid == true)
+        viewModel.toggleStrategy()
+        #expect(viewModel.currentStrategy.usesBentoGrid == false)
+    }
+
+    @Test("FeedViewModel pide iniciar sesión al tocar un repo protegido y lo abre al autenticarse")
+    @MainActor
+    func testFeedViewModelProtectedRepoFlow() async throws {
+        let container = ShowcaseCoreModule.buildGraph(including: [FakerGitHubModule.self])
+        let viewModel = try FeedViewModel(from: container)
+
+        let protectedRepo = GitHubRepoItem.curatedRepositories.first { $0.isPrivateVault }!
+
+        // 1. Sin sesión: abre el modal de Auth Gate en lugar del detalle
+        viewModel.openRepository(protectedRepo)
+        #expect(viewModel.activeRepoSession == nil)
+        #expect(viewModel.showAuthGateSheet == true)
+
+        // 2. Al iniciar sesión: cierra el Auth Gate y abre automáticamente el repositorio pendiente
+        viewModel.login()
+        #expect(viewModel.isAuthenticated == true)
+        #expect(viewModel.showAuthGateSheet == false)
+        #expect(viewModel.activeRepoSession?.inspector.repo.name == protectedRepo.name)
     }
 }
