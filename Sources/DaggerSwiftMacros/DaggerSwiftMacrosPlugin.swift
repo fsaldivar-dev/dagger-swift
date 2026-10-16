@@ -177,14 +177,16 @@ struct DaggerSwiftMacrosPlugin {
                 callArgs = ""
             } else {
                 let paramDecls = fn.parameters.enumerated().map { idx, p in
-                    "_p\(idx): \(p.type)"
+                    let pName = p.name == "_" ? "arg\(idx)" : p.name
+                    return "\(pName): \(p.type)"
                 }.joined(separator: ", ")
                 closureParams = "(\(paramDecls)) in"
                 callArgs = fn.parameters.enumerated().map { idx, p in
+                    let pName = p.name == "_" ? "arg\(idx)" : p.name
                     if p.externalLabel == "_" {
-                        return "_p\(idx)"
+                        return pName
                     } else {
-                        return "\(p.externalLabel): _p\(idx)"
+                        return "\(p.externalLabel): \(pName)"
                     }
                 }.joined(separator: ", ")
             }
@@ -192,31 +194,32 @@ struct DaggerSwiftMacrosPlugin {
             let invocation = fn.isThrowing
                 ? "try Self.\(fn.name)(\(callArgs))"
                 : "Self.\(fn.name)(\(callArgs))"
+            let returnTypeSelf = fn.returnType.contains(" ") ? "(\(fn.returnType)).self" : "\(fn.returnType).self"
 
             switch fn.kind {
             case .singleton:
-                lines.append("    container.provideSingleton((\(fn.returnType)).self) { \(closureParams)")
+                lines.append("    container.provideSingleton(\(returnTypeSelf)) { \(closureParams)")
                 lines.append("        \(invocation)")
                 lines.append("    }")
 
             case .scoped(let customScope):
                 if let customScope, !customScope.isEmpty {
-                    lines.append("    container.provideScoped(in: \(customScope), (\(fn.returnType)).self) { \(closureParams)")
+                    lines.append("    container.provideScoped(in: \(customScope), \(returnTypeSelf)) { \(closureParams)")
                     lines.append("        \(invocation)")
                     lines.append("    }")
                 } else {
-                    lines.append("    container.provideScoped(in: Self.self, (\(fn.returnType)).self) { \(closureParams)")
+                    lines.append("    container.provideScoped(in: Self.self, \(returnTypeSelf)) { \(closureParams)")
                     lines.append("        \(invocation)")
                     lines.append("    }")
                 }
 
             case .provider:
-                lines.append("    container.provide((\(fn.returnType)).self) { \(closureParams)")
+                lines.append("    container.provide(\(returnTypeSelf)) { \(closureParams)")
                 lines.append("        \(invocation)")
                 lines.append("    }")
 
             case .businessRule:
-                lines.append("    container.provideBusinessRule((\(fn.returnType)).self) { \(closureParams)")
+                lines.append("    container.provideBusinessRule(\(returnTypeSelf)) { \(closureParams)")
                 lines.append("        \(invocation)")
                 lines.append("    }")
 
@@ -224,8 +227,9 @@ struct DaggerSwiftMacrosPlugin {
                 let baseType = fn.returnType.hasSuffix("?")
                     ? String(fn.returnType.dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
                     : fn.returnType
+                let baseTypeSelf = baseType.contains(" ") ? "(\(baseType)).self" : "\(baseType).self"
                 let reasonLiteral = customReason ?? "\"Precondición requerida (\(baseType)) no satisfecha\""
-                lines.append("    container.providePrecondition((\(baseType)).self, reasonIfUnmet: \(reasonLiteral)) { \(closureParams)")
+                lines.append("    container.providePrecondition(\(baseTypeSelf), reasonIfUnmet: \(reasonLiteral)) { \(closureParams)")
                 lines.append("        \(invocation)")
                 lines.append("    }")
             }
@@ -273,7 +277,8 @@ struct DaggerSwiftMacrosPlugin {
         let initModifier = isClass ? "public convenience init" : "public init"
         let resolveArgs = initParams.map { p in
             let label = p.externalLabel == "_" ? "" : "\(p.externalLabel): "
-            return "\(label)try container.resolve((\(p.type)).self)"
+            let typeSelf = p.type.contains(" ") ? "(\(p.type)).self" : "\(p.type).self"
+            return "\(label)try container.resolve(\(typeSelf))"
         }.joined(separator: ", ")
 
         lines.append("\(initModifier)(from container: DaggerSwift.ScopeContainer) throws {")
@@ -292,11 +297,13 @@ struct DaggerSwiftMacrosPlugin {
             callArgs = ""
         } else {
             let pDecls = initParams.enumerated().map { idx, p in
-                "_p\(idx): \(p.type)"
+                let pName = p.name == "_" ? "arg\(idx)" : p.name
+                return "\(pName): \(p.type)"
             }.joined(separator: ", ")
             closureParams = "(\(pDecls)) in"
             callArgs = initParams.enumerated().map { idx, p in
-                p.externalLabel == "_" ? "_p\(idx)" : "\(p.externalLabel): _p\(idx)"
+                let pName = p.name == "_" ? "arg\(idx)" : p.name
+                return p.externalLabel == "_" ? pName : "\(p.externalLabel): \(pName)"
             }.joined(separator: ", ")
         }
 
@@ -414,12 +421,13 @@ struct DaggerSwiftMacrosPlugin {
     }
 
     private static func extractAttributeArgument(from attrSource: String) -> String? {
-        guard let open = attrSource.firstIndex(of: "("),
-              let close = attrSource.lastIndex(of: ")"),
+        let clean = stripComments(attrSource)
+        guard let open = clean.firstIndex(of: "("),
+              let close = clean.lastIndex(of: ")"),
               open < close else {
             return nil
         }
-        var arg = String(attrSource[attrSource.index(after: open)..<close])
+        var arg = String(clean[clean.index(after: open)..<close])
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if arg.hasPrefix("wrappedValue:") {
             arg = String(arg.dropFirst("wrappedValue:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -558,6 +566,9 @@ struct DaggerSwiftMacrosPlugin {
         for d in decls {
             let trimmed = d.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.contains("static ") || trimmed.contains("func ") || trimmed.contains("init(") {
+                continue
+            }
+            if trimmed.contains("@Published") || trimmed.contains("@State") || trimmed.contains("@Binding") {
                 continue
             }
             // Ignorar propiedades con valor por defecto (=) o bloques computados ({)
