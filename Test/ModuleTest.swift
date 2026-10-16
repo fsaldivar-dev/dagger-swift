@@ -30,9 +30,9 @@ final class AnalisiRepository {
 
 
 protocol AppModule: Modulable {
-    static func provideApiService() -> ApiService
+    static var apiService: ApiService { get }
     static func provideUserRepository(apiService: ApiService) -> UserRepository
-    static var analisisRepository: AnalisiRepository { get set }
+    static var analisisRepository: AnalisiRepository { get }
 }
 
 
@@ -41,12 +41,11 @@ protocol AppComponent: Component {}
 
 
 enum AppModuleImpl: AppModule {
-    @Singleton(wrappedValue: .init(apiService: provideApiService()))
+    @Provider(wrappedValue: .init())
+    static var apiService: ApiService
+
+    @Singleton(wrappedValue: .init(apiService: apiService))
     static var analisisRepository: AnalisiRepository
-    
-    static func provideApiService() -> ApiService {
-        .init()
-    }
     
     static func provideUserRepository(apiService: ApiService) -> UserRepository {
         .init(apiService: apiService)
@@ -57,16 +56,35 @@ enum AppModuleImpl: AppModule {
 struct LoginComponent<Module: AppModule>: AppComponent {
     static func injectLoginSubModule() -> LoginSubModule {
         .init(analisiRepository: Module.analisisRepository,
-              userRepository: Module.provideUserRepository(apiService: Module.provideApiService()))
+              userRepository: Module.provideUserRepository(apiService: Module.apiService))
     }
 }
 
 struct LoginSubModule {
-    private var analisiRepository: AnalisiRepository
-    private var userRepository: UserRepository
+    let analisiRepository: AnalisiRepository
+    let userRepository: UserRepository
     
     init(analisiRepository: AnalisiRepository, userRepository: UserRepository) {
         self.analisiRepository = analisiRepository
         self.userRepository = userRepository
+    }
+}
+
+import Testing
+
+@Suite("Dagger 1 - Module & Component Tests")
+@MainActor
+struct DaggerV1Tests {
+    @Test("Singleton devuelve siempre la misma instancia y Provider devuelve instancias nuevas en cada lectura")
+    func testSingletonAndProviderInV1() {
+        let firstSubModule = LoginComponent<AppModuleImpl>.injectLoginSubModule()
+        let secondSubModule = LoginComponent<AppModuleImpl>.injectLoginSubModule()
+
+        // @Singleton conserva la misma referencia en memoria
+        #expect(firstSubModule.analisiRepository === secondSubModule.analisiRepository)
+
+        // @Provider crea una nueva instancia en cada lectura de propiedad
+        #expect(AppModuleImpl.apiService !== AppModuleImpl.apiService)
+        #expect(firstSubModule.userRepository !== secondSubModule.userRepository)
     }
 }
