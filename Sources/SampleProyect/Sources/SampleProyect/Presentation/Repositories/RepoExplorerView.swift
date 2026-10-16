@@ -64,51 +64,79 @@ public struct RepoExplorerView: View {
 
     private var businessRuleBanner: some View {
         HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Image(systemName: "arrow.triangle.branch")
-                        .foregroundStyle(.purple)
-                    Text("Nodo de Regla de Negocio: \(viewModel.currentStrategy.variant.rawValue)")
-                        .font(.subheadline.bold())
-                }
-                Text(viewModel.currentStrategy.accentDescription)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            ZStack {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.purple.opacity(0.14))
+                    .frame(width: 36, height: 36)
+                Image(systemName: "arrow.triangle.branch")
+                    .foregroundStyle(.purple)
+                    .font(.subheadline.bold())
             }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(viewModel.currentStrategy.badgeTitle)
+                    .font(.footnote.weight(.bold))
+                    .foregroundStyle(.primary)
+
+                Text(viewModel.currentStrategy.accentDescription)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+
             Spacer()
-            Toggle("Bento v2", isOn: Binding(
+
+            Toggle("", isOn: Binding(
                 get: { viewModel.currentStrategy.usesBentoGrid },
-                set: { _ in viewModel.toggleStrategy(coordinator: coordinator) }
+                set: { _ in
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                        viewModel.toggleStrategy(coordinator: coordinator)
+                    }
+                }
             ))
             .labelsHidden()
         }
         .padding(12)
         .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.purple.opacity(0.08))
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.purple.opacity(0.06))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.purple.opacity(0.15), lineWidth: 1)
         )
     }
 
     private var searchBar: some View {
-        HStack {
+        HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
+                .font(.subheadline)
                 .foregroundStyle(.secondary)
-            TextField("Buscar repositorio en @fsaldivar-dev (ej. dagger-swift, AutoPilot, Kairo)...", text: $viewModel.searchText)
+
+            TextField("Buscar repositorios de @fsaldivar-dev...", text: $viewModel.searchText)
+                .font(.subheadline)
                 .textFieldStyle(.plain)
+
             if !viewModel.searchText.isEmpty {
                 Button {
                     viewModel.searchText = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(.secondary)
+                        .font(.subheadline)
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(10)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
         .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color.secondary.opacity(0.1))
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.showcaseSubtleFill)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
         )
     }
 }

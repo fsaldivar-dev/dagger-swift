@@ -42,19 +42,11 @@ public struct ShowcaseRootView: View {
     public var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // Header Banner: Perfil (@fsaldivar-dev) y Botón de Autenticación
-                profileHeaderBanner
+                // Header Banner: Perfil Social (@fsaldivar-dev)
+                socialProfileHeader
 
-                // Selector de pestañas
-                Picker("Sección", selection: $coordinator.selectedTab) {
-                    ForEach(ShowcaseTab.allCases) { tab in
-                        Label(tab.rawValue, systemImage: tab.systemIcon)
-                            .tag(tab)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
+                // Barra de Pestañas Social (Sliding Capsule Tab Bar)
+                socialTabBar
 
                 Divider()
 
@@ -95,7 +87,8 @@ public struct ShowcaseRootView: View {
                             await repoExplorerViewModel.refresh()
                         }
                     } label: {
-                        Label("Actualizar", systemImage: "arrow.clockwise")
+                        Image(systemName: "arrow.clockwise")
+                            .font(.subheadline.bold())
                     }
                 }
             }
@@ -137,123 +130,226 @@ public struct ShowcaseRootView: View {
         }
     }
 
-    // MARK: - Banner de Perfil y Chips de Estado
+    // MARK: - Perfil Estilo Social (GitHub Mobile / Threads)
 
-    private var profileHeaderBanner: some View {
+    private var socialProfileHeader: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .center, spacing: 14) {
-                AsyncImage(url: URL(string: homeViewModel.profile.avatarURL)) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .scaledToFill()
-                    default:
-                        ZStack {
-                            Circle()
-                                .fill(
-                                    LinearGradient(
-                                        colors: [.indigo, .purple, .orange],
-                                        startPoint: .topLeading,
-                                        endPoint: .bottomTrailing
+            // Fila superior: Avatar + Botón de Estado / Autenticación
+            HStack(alignment: .center) {
+                ZStack(alignment: .bottomTrailing) {
+                    AsyncImage(url: URL(string: homeViewModel.profile.avatarURL)) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .scaledToFill()
+                        default:
+                            ZStack {
+                                Circle()
+                                    .fill(
+                                        LinearGradient(
+                                            colors: [.indigo, .purple, .cyan],
+                                            startPoint: .topLeading,
+                                            endPoint: .bottomTrailing
+                                        )
                                     )
-                                )
-                            Image(systemName: "chevron.left.forwardslash.chevron.right")
-                                .font(.title2.bold())
-                                .foregroundStyle(.white)
+                                Image(systemName: "person.crop.circle.fill")
+                                    .font(.system(size: 38))
+                                    .foregroundStyle(.white.opacity(0.9))
+                            }
                         }
                     }
-                }
-                .frame(width: 60, height: 60)
-                .clipShape(Circle())
-                .overlay(Circle().stroke(Color.primary.opacity(0.18), lineWidth: 2))
+                    .frame(width: 64, height: 64)
+                    .clipShape(Circle())
+                    .overlay(Circle().stroke(Color.primary.opacity(0.12), lineWidth: 2))
+                    .shadow(color: Color.black.opacity(0.08), radius: 6, x: 0, y: 3)
 
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        Text(homeViewModel.profile.name)
-                            .font(.headline.bold())
-                        Text("@\(homeViewModel.profile.login)")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Text(homeViewModel.profile.bio)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-
-                    HStack(spacing: 10) {
-                        Label("\(homeViewModel.profile.publicRepos) repos", systemImage: "folder.fill")
-                        Label("\(homeViewModel.profile.followers) followers", systemImage: "person.2.fill")
-                        Label(homeViewModel.profile.location, systemImage: "location.fill")
-                    }
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(.secondary)
+                    // Dot indicador de estado
+                    Circle()
+                        .fill(homeViewModel.isAuthenticated ? Color.green : Color.orange)
+                        .frame(width: 15, height: 15)
+                        .overlay(Circle().stroke(Color.showcaseSystemBackground, lineWidth: 2.5))
+                        .offset(x: -1, y: -1)
                 }
 
                 Spacer()
 
-                // Botón de Precondición
+                // Botón de acción social
                 Button {
-                    homeViewModel.toggleAuthentication(coordinator: coordinator)
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                        homeViewModel.toggleAuthentication(coordinator: coordinator)
+                    }
                 } label: {
                     HStack(spacing: 6) {
-                        Image(systemName: homeViewModel.isAuthenticated ? "checkmark.shield.fill" : "lock.slash.fill")
-                        Text(homeViewModel.isAuthenticated ? "Sesión Activa" : "Sin Sesión")
+                        Image(systemName: homeViewModel.isAuthenticated ? "checkmark.shield.fill" : "lock.shield")
                             .font(.caption.bold())
+                        Text(homeViewModel.isAuthenticated ? "Sesión Activa" : "Iniciar Sesión")
+                            .font(.caption.weight(.bold))
                     }
-                    .padding(.horizontal, 12)
+                    .padding(.horizontal, 14)
                     .padding(.vertical, 8)
                     .background(
-                        RoundedRectangle(cornerRadius: 10)
-                            .fill(homeViewModel.isAuthenticated ? Color.green.opacity(0.18) : Color.orange.opacity(0.18))
+                        Capsule().fill(homeViewModel.isAuthenticated ? Color.green.opacity(0.14) : Color.primary.opacity(0.06))
                     )
-                    .foregroundStyle(homeViewModel.isAuthenticated ? Color.green : Color.orange)
+                    .overlay(
+                        Capsule().stroke(homeViewModel.isAuthenticated ? Color.green.opacity(0.4) : Color.primary.opacity(0.15), lineWidth: 1)
+                    )
+                    .foregroundStyle(homeViewModel.isAuthenticated ? Color.green : Color.primary)
                 }
                 .buttonStyle(.plain)
             }
 
-            // Chips informativos
+            // Nombre y Usuario
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(homeViewModel.profile.name)
+                        .font(.title3.weight(.bold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    Image(systemName: "checkmark.seal.fill")
+                        .font(.subheadline)
+                        .foregroundStyle(.blue)
+                }
+
+                Text("@\(homeViewModel.profile.login)")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            // Biografía completa
+            if !homeViewModel.profile.bio.isEmpty {
+                Text(homeViewModel.profile.bio)
+                    .font(.subheadline)
+                    .foregroundStyle(.primary.opacity(0.9))
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            // Metadata: Ubicación y Stack
+            HStack(spacing: 14) {
+                if !homeViewModel.profile.location.isEmpty {
+                    Label(homeViewModel.profile.location, systemImage: "mappin.and.ellipse")
+                }
+                Label("Swift 6 · Dagger DAG", systemImage: "cpu")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+            // Contadores sociales (GitHub / Twitter metrics)
+            HStack(spacing: 16) {
+                HStack(spacing: 4) {
+                    Text("\(homeViewModel.profile.publicRepos)")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(.primary)
+                    Text("repos")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                HStack(spacing: 4) {
+                    Text("\(homeViewModel.profile.followers)")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(.primary)
+                    Text("seguidores")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                HStack(spacing: 4) {
+                    Text("\(homeViewModel.profile.following)")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(.primary)
+                    Text("siguiendo")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            // Barra de Estado de Arquitectura
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    statusChip(icon: "cpu.fill", text: homeViewModel.environmentTitle, tint: .blue)
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(Color.blue)
+                            .frame(width: 6, height: 6)
+                        Text(homeViewModel.environmentTitle)
+                            .font(.caption2.weight(.medium))
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(Color.blue.opacity(0.12)))
+                    .foregroundStyle(.blue)
 
                     Button {
-                        homeViewModel.toggleLayoutVariant(coordinator: coordinator)
-                        repoExplorerViewModel.refreshStrategy()
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                            homeViewModel.toggleLayoutVariant(coordinator: coordinator)
+                            repoExplorerViewModel.refreshStrategy()
+                        }
                     } label: {
-                        statusChip(
-                            icon: "flag.2.crossed.fill",
-                            text: repoExplorerViewModel.currentStrategy.badgeTitle + " (Tocar)",
-                            tint: repoExplorerViewModel.currentStrategy.usesBentoGrid ? .purple : .gray
+                        HStack(spacing: 5) {
+                            Image(systemName: "rectangle.3.group")
+                            Text(repoExplorerViewModel.currentStrategy.badgeTitle)
+                        }
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(
+                            Capsule().fill(repoExplorerViewModel.currentStrategy.usesBentoGrid ? Color.purple.opacity(0.14) : Color.secondary.opacity(0.12))
                         )
+                        .foregroundStyle(repoExplorerViewModel.currentStrategy.usesBentoGrid ? Color.purple : Color.secondary)
                     }
                     .buttonStyle(.plain)
 
-                    statusChip(
-                        icon: "memorychip.fill",
-                        text: "Scopes Creados: \(coordinator.totalScopesCreated) · Liberados: \(coordinator.totalScopesTornDown) · Leaks: \(coordinator.lastLeakAuditCount)",
-                        tint: .teal
-                    )
+                    HStack(spacing: 5) {
+                        Image(systemName: "memorychip.fill")
+                        Text("Scopes: \(coordinator.totalScopesCreated) · Liberados: \(coordinator.totalScopesTornDown) · Leaks: \(coordinator.lastLeakAuditCount)")
+                    }
+                    .font(.caption2.weight(.medium))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(Color.teal.opacity(0.12)))
+                    .foregroundStyle(.teal)
                 }
             }
         }
         .padding(.horizontal, 16)
-        .padding(.top, 12)
-        .padding(.bottom, 6)
-        .background(Color.secondary.opacity(0.06))
+        .padding(.top, 10)
+        .padding(.bottom, 12)
+        .background(Color.showcaseHeaderBackground)
     }
 
-    private func statusChip(icon: String, text: String, tint: Color) -> some View {
-        HStack(spacing: 5) {
-            Image(systemName: icon)
-            Text(text)
+    // MARK: - Barra de Pestañas Social (Capsule Tabs)
+
+    private var socialTabBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(ShowcaseTab.allCases, id: \.self) { tab in
+                    let isSelected = coordinator.selectedTab == tab
+                    Button {
+                        withAnimation(.snappy(duration: 0.22)) {
+                            coordinator.selectedTab = tab
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: tab.systemIcon)
+                                .font(.caption.weight(.semibold))
+                            Text(tab.rawValue)
+                                .font(.subheadline.weight(isSelected ? .bold : .medium))
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(
+                            Capsule()
+                                .fill(isSelected ? Color.primary : Color.secondary.opacity(0.1))
+                        )
+                        .foregroundStyle(isSelected ? Color.showcaseSystemBackground : Color.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
         }
-        .font(.caption2.weight(.semibold))
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .background(Capsule().fill(tint.opacity(0.14)))
-        .foregroundStyle(tint)
     }
 }
 
