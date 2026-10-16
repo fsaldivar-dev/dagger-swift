@@ -3,7 +3,8 @@
 //  Features
 //
 //  Capa Features · Sub-scope de Detalle de Repositorio (RepoDetailModule).
-//  Observa cómo @Inject(scope:) y @Inject generan los inits automáticamente sin boilerplate.
+//  Al declarar `let session: ValidatedSession`, el grafo exige automáticamente
+//  que la @Precondition se cumpla antes de instanciar `RepoDetailInspector`.
 //
 
 import Foundation
@@ -16,6 +17,7 @@ public enum RepoDetailModule {}
 
 @Inject(scope: RepoDetailModule.self)
 public final class RepoDetailInspector: ScopeDisposable, @unchecked Sendable {
+    public let session: ValidatedSession
     public let repo: GitHubRepoItem
     public let gitHubRepository: any GitHubRepositoryProtocol
 
@@ -25,13 +27,6 @@ public final class RepoDetailInspector: ScopeDisposable, @unchecked Sendable {
     public func onScopeTeardown() {
         isDisposed = true
     }
-}
-
-/// Exige el nodo `ValidatedSession` (@Precondition) antes de resolver `RepoDetailInspector`.
-@Inject
-public final class ProtectedRepoAccess {
-    public let session: ValidatedSession
-    public let inspector: RepoDetailInspector
 }
 
 public struct ActiveRepoSession: Identifiable {

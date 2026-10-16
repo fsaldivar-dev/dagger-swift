@@ -119,13 +119,7 @@ public final class FeedViewModel: ObservableObject {
         childScope.bindInstance(repo)
 
         do {
-            let inspector: RepoDetailInspector
-            if repo.isPrivateVault {
-                // Exige ValidatedSession (@Precondition) antes de crear el inspector
-                inspector = try ProtectedRepoAccess.resolve(in: childScope).inspector
-            } else {
-                inspector = try RepoDetailInspector.resolve(in: childScope)
-            }
+            let inspector = try childScope.resolve(RepoDetailInspector.self)
             totalScopesCreated += 1
             activeRepoSession = ActiveRepoSession(scope: childScope, inspector: inspector)
         } catch let GraphError.unmetPrecondition(_, reason) {
