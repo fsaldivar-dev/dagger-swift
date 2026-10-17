@@ -163,11 +163,14 @@ struct DaggerSwiftMacrosPlugin {
 
     private static func expandModuleMember(attrSource: String, declSource: String) -> String {
         let clean = stripComments(declSource)
+        let moduleVersion = extractModuleVersion(from: attrSource)
         let moduleScope = extractModuleScope(from: attrSource)
         let includedModules = extractModuleIncludes(from: attrSource)
         let functions = parseModuleFunctions(from: clean)
 
         var lines: [String] = []
+        lines.append("nonisolated public static let moduleVersion: String = \"\(moduleVersion)\"")
+        lines.append("")
         lines.append("nonisolated public static func register(in container: DaggerSwift.ScopeContainer) {")
 
         if let moduleScope, !moduleScope.isEmpty {
@@ -458,6 +461,26 @@ struct DaggerSwiftMacrosPlugin {
             return String(arg[arg.index(after: colon)...]).trimmingCharacters(in: .whitespacesAndNewlines)
         }
         return arg
+    }
+
+    private static func extractModuleVersion(from attrSource: String) -> String {
+        guard let rawArgs = extractAttributeArgument(from: attrSource), !rawArgs.isEmpty else {
+            return "1.0"
+        }
+        for part in splitByTopLevelComma(rawArgs) {
+            let trimmed = part.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.hasPrefix("scope:") || trimmed.hasPrefix("includes:") {
+                continue
+            }
+            if trimmed.hasPrefix("version:") {
+                return String(trimmed.dropFirst("version:".count))
+                    .trimmingCharacters(in: CharacterSet(charactersIn: " \""))
+            }
+            if !trimmed.contains(":") {
+                return trimmed.trimmingCharacters(in: CharacterSet(charactersIn: " \""))
+            }
+        }
+        return "1.0"
     }
 
     private static func extractModuleScope(from attrSource: String) -> String? {

@@ -10,13 +10,15 @@ let package = Package(
         .library(name: "Core", targets: ["Core"]),
         .library(name: "Services", targets: ["Services"]),
         .library(name: "Features", targets: ["Features"]),
+        .library(name: "MultiCountryNewsDemo", targets: ["MultiCountryNewsDemo"]),
+        .library(name: "FintechMockupDemo", targets: ["FintechMockupDemo"]),
         .library(name: "SampleProyect", targets: ["SampleProyect"]),
     ],
     dependencies: [
         .package(name: "DaggerSwift", path: "../../")
     ],
     targets: [
-        // 1. Foundation: Entidades compartidas, modelos de dominio y Design System
+        // 1. Foundation: Entidades compartidas y Design System
         .target(
             name: "AppFoundation",
             dependencies: []
@@ -31,7 +33,7 @@ let package = Package(
             ]
         ),
 
-        // 3. Services: Implementaciones de Red (GitHub REST / Faker), Sesión, Feature Flags y @Module de entornos
+        // 3. Services: Implementaciones de Red (GitHub REST), Sesión, Feature Flags y @Module
         .target(
             name: "Services",
             dependencies: [
@@ -51,7 +53,25 @@ let package = Package(
             ]
         ),
 
-        // 5. SampleProyect (App Root): Une las capas para los targets ejecutables Demo y DemoFaker
+        // 5. Target Demo 1: Login Multi-Country + Home de Noticias en 4 Idiomas (MX, US, BR, FR)
+        .target(
+            name: "MultiCountryNewsDemo",
+            dependencies: [
+                "DaggerSwift",
+                "AppFoundation"
+            ]
+        ),
+
+        // 6. Target Demo 2: App Mockup Fintech con Paleta Module(0.1), Module(1.0), Module(2.0) y A/B Flags
+        .target(
+            name: "FintechMockupDemo",
+            dependencies: [
+                "DaggerSwift",
+                "AppFoundation"
+            ]
+        ),
+
+        // 7. SampleProyect (App Root): Selector con botones para lanzar cualquiera de las Demo Apps
         .target(
             name: "SampleProyect",
             dependencies: [
@@ -59,7 +79,9 @@ let package = Package(
                 "AppFoundation",
                 "Core",
                 "Services",
-                "Features"
+                "Features",
+                "MultiCountryNewsDemo",
+                "FintechMockupDemo"
             ]
         ),
 
@@ -69,7 +91,7 @@ let package = Package(
             dependencies: ["SampleProyect"]
         ),
 
-        // Target de Test 2: Pruebas del Grafo de Dependencias (Precondiciones, Módulos y JSON del Grafo)
+        // Target de Test 2: Pruebas del Grafo de Dependencias
         .testTarget(
             name: "AppGraphTests",
             dependencies: [

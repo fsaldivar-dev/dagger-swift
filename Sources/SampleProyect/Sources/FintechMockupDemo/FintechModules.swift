@@ -1,15 +1,14 @@
 //
 //  FintechModules.swift
-//  Services
+//  FintechMockupDemo
 //
-//  Demo 2 · Evolución de Módulo (`FintechModuleV1` -> `FintechModuleV2` con `@Module(includes:)`)
+//  Demo 2 · Paleta de Evolución de Módulos (`@Module(0.1)` -> `@Module(1.0)` -> `@Module(2.0)`)
 //  y repositorio reactivo de Feature Flags A/B para `@BusinessRule`.
 //
 
 import Foundation
 import DaggerSwift
 import AppFoundation
-import Core
 
 @Inject
 public final class FintechABFlagsRepositoryImpl: FintechABFlagsRepositoryProtocol, @unchecked Sendable {
@@ -85,16 +84,32 @@ public struct FintechCoreBankingImpl: FintechCoreBankingProtocol {
     }
 }
 
+public struct FintechCardEngineV0_1: FintechCardEngineProtocol {
+    public init() {}
+    public func fetchCardProduct() -> FintechCardProduct {
+        FintechCardProduct(
+            moduleVersionTag: "Module(\(FintechModuleV0_1.moduleVersion)) · MVP Beta",
+            cardTitle: "Dagger Starter Virtual v0.1",
+            cashbackText: "0% Cashback · Solo transferencias SPEI básicas",
+            perks: [
+                "Cuenta CLABE SPEI básica de lanzamiento (MVP 0.1)",
+                "Tarjeta virtual para compras nacionales"
+            ],
+            isMetalV2: false
+        )
+    }
+}
+
 public struct FintechCardEngineV1: FintechCardEngineProtocol {
     public init() {}
     public func fetchCardProduct() -> FintechCardProduct {
         FintechCardProduct(
-            moduleVersionTag: "FintechModuleV1 (v1.0)",
-            cardTitle: "Dagger Classic Card v1",
+            moduleVersionTag: "Module(\(FintechModuleV1.moduleVersion)) · Release 1.0",
+            cardTitle: "Dagger Classic Card v1.0",
             cashbackText: "1.5% Cashback en compras digitales",
             perks: [
-                "Transferencias SPEI sin comisión",
-                "Tarjeta virtual con CVV dinámico"
+                "Hereda Core Bancario SPEI de Module(0.1)",
+                "1.5% Cashback y tarjeta física sin anualidad"
             ],
             isMetalV2: false
         )
@@ -105,11 +120,11 @@ public struct FintechCardEngineV2: FintechCardEngineProtocol {
     public init() {}
     public func fetchCardProduct() -> FintechCardProduct {
         FintechCardProduct(
-            moduleVersionTag: "FintechModuleV2 (v2.0 · includes V1)",
-            cardTitle: "Dagger Black Metal Card v2",
+            moduleVersionTag: "Module(\(FintechModuleV2.moduleVersion)) · Metal 2.0",
+            cardTitle: "Dagger Black Metal Card v2.0",
             cashbackText: "3.5% Cashback Instantáneo + Yield 11.2%",
             perks: [
-                "Hereda Core Bancario SPEI de V1 sin repetirlo",
+                "Hereda Core Bancario SPEI sin repetir código",
                 "3.5% Cashback directo a tu Cajita de Rendimiento",
                 "Sala Lounge VIP + Seguro Internacional incluido"
             ],
@@ -118,7 +133,7 @@ public struct FintechCardEngineV2: FintechCardEngineProtocol {
     }
 }
 
-@Module
+@Module(1.0)
 public enum FintechSharedFlagsModule {
     @Singleton
     public static func abFlagsRepository() -> any FintechABFlagsRepositoryProtocol {
@@ -126,9 +141,9 @@ public enum FintechSharedFlagsModule {
     }
 }
 
-/// Versión 1.0 del Módulo Fintech: registra el Core Bancario y el Motor de Tarjeta Clásica V1.
-@Module(scope: FintechScope.self)
-public enum FintechModuleV1 {
+/// Paleta 1: `@Module(0.1)` — MVP Beta con Core Bancario SPEI y Tarjeta Starter v0.1.
+@Module(0.1, scope: FintechScope.self)
+public enum FintechModuleV0_1 {
     @Scoped
     public static func coreBanking() -> any FintechCoreBankingProtocol {
         FintechCoreBankingImpl()
@@ -136,14 +151,21 @@ public enum FintechModuleV1 {
 
     @Scoped
     public static func cardEngine() -> any FintechCardEngineProtocol {
+        FintechCardEngineV0_1()
+    }
+}
+
+/// Paleta 2: `@Module(1.0)` — Conserva el Core Bancario de `0.1` y evoluciona a Classic Card 1.5%.
+@Module(1.0, scope: FintechScope.self, includes: [FintechModuleV0_1.self])
+public enum FintechModuleV1 {
+    @Scoped
+    public static func cardEngine() -> any FintechCardEngineProtocol {
         FintechCardEngineV1()
     }
 }
 
-/// Versión 2.0 del Módulo Fintech:
-/// Usa `@Module(scope: FintechScope.self, includes: [FintechModuleV1.self])` para conservar
-/// intacto el `coreBanking()` de la V1 y reemplazar únicamente `cardEngine()` por `FintechCardEngineV2`.
-@Module(scope: FintechScope.self, includes: [FintechModuleV1.self])
+/// Paleta 3: `@Module(2.0)` — Conserva el Core Bancario y evoluciona a Black Metal Card 3.5% + Yield.
+@Module(2.0, scope: FintechScope.self, includes: [FintechModuleV1.self])
 public enum FintechModuleV2 {
     @Scoped
     public static func cardEngine() -> any FintechCardEngineProtocol {

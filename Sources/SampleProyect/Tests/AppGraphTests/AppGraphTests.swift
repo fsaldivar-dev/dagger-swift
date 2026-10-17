@@ -5,6 +5,8 @@ import AppFoundation
 import Core
 import Services
 import Features
+import MultiCountryNewsDemo
+import FintechMockupDemo
 @testable import SampleProyect
 
 // MARK: - Fake exclusivo del Target de Tests (Cero Fakes en Release)
@@ -31,16 +33,80 @@ enum FakerGitHubModule {
     }
 }
 
-// MARK: - Suite de Pruebas del Grafo de los 3 Demos
+// MARK: - Suite de Pruebas del Grafo de Dependencias
 
 @Suite("2. Pruebas del Grafo de Dependencias (Demos 1, 2 y 3)")
 struct AppGraphTests {
 
-    // MARK: - Demo 1: Login Multi-Country + Home de Noticias Multi-Idioma (MX, US, BR, FR)
+    @Test("Inyectar Fakes al vuelo con whenResolved(...).returns(Fake.self)", .tags(.graph))
+    @MainActor
+    func testWhenResolvedReturnsFake() {
+        expectGraph(ShowcaseCoreModule.self, LiveGitHubModule.self)
+            .whenResolved((any GitHubRepositoryProtocol).self).returns(FakerGitHubRepository.self)
+            .resolved(GetProfileUseCase.self)
+            .resolved(GetRepositoriesUseCase.self)
+            .resolved(FeedViewModel.self)
+    }
 
-    @Test("Demo 1 (Multi-Country): Bloquea noticias sin login y resuelve en ES, EN, PT y FR tras autenticar", .tags(.precondition, .graph))
+    @Test("Composición completa con módulos: expectGraph(...).resolved(...)", .tags(.graph))
+    @MainActor
+    func testComposicionFlujoPrincipal() {
+        expectGraph(ShowcaseCoreModule.self, FakerGitHubModule.self)
+            .matchesContract(of: LiveGitHubModule.self)
+            .resolved((any GitHubRepositoryProtocol).self)
+            .resolved((any AuthRepositoryProtocol).self)
+            .resolved((any FeatureFlagRepositoryProtocol).self)
+            .resolved((any RepoExplorerStrategyProtocol).self)
+            .resolved(GetProfileUseCase.self)
+            .resolved(GetRepositoriesUseCase.self)
+            .resolved(FeedViewModel.self)
+    }
+
+    @Test("Precondición: sin sesión falla con preconditionFailure() y tras login se resuelve", .tags(.precondition))
+    func testPrecondicionSinNavegarScopes() {
+        expectGraph(ShowcaseCoreModule.self, FakerGitHubModule.self, RepoDetailModule.self)
+            .whenResolved(GitHubRepoItem.self).returns(.flagshipDaggerRepo)
+            .dependency(GetProfileUseCase.self).hasNoPreconditions()
+            .dependency(RepoDetailInspector.self).preconditionFailure()
+            .when { (auth: any AuthRepositoryProtocol) in
+                auth.loginAsSaldivar()
+            }
+            .dependency(ValidatedSession.self).resolved()
+            .dependency(RepoDetailInspector.self).resolved()
+    }
+
+    @Test("Precondición directa con expectWhenCondition", .tags(.precondition))
+    func testPrecondicionConExpectWhenCondition() {
+        expectWhenCondition(ShowcaseCoreModule.self, FakerGitHubModule.self, RepoDetailModule.self) { (auth: any AuthRepositoryProtocol) in
+            auth.loginAsSaldivar()
+        }
+        .whenResolved(GitHubRepoItem.self).returns(.flagshipDaggerRepo)
+        .dependency(ValidatedSession.self).resolved()
+        .dependency(RepoDetailInspector.self).resolved()
+    }
+
+    @Test("Regla de negocio (@BusinessRule): cambia de Bento v2 a Compacto v1", .tags(.businessRule))
+    func testReglaDeNegocioConWhen() {
+        expectGraph(ShowcaseCoreModule.self, FakerGitHubModule.self)
+            .dependency((any RepoExplorerStrategyProtocol).self).resolved { $0.usesBentoGrid == true }
+            .when { (flags: any FeatureFlagRepositoryProtocol) in
+                flags.setBentoV2(false)
+            }
+            .dependency((any RepoExplorerStrategyProtocol).self).resolved { $0.usesBentoGrid == false }
+    }
+
+    @Test("Módulo faltante: sin módulo de servicios falla con unresolvedFailure()", .tags(.graph))
+    func testModuloFaltante() {
+        expectGraph(ShowcaseCoreModule.self)
+            .dependency((any GitHubRepositoryProtocol).self).unresolvedFailure()
+            .dependency(GetProfileUseCase.self).unresolvedFailure()
+            .dependency(GetRepositoriesUseCase.self).unresolvedFailure()
+    }
+
+    // MARK: - Demo 1: Target `MultiCountryNewsDemo` (MX, US, BR, FR)
+
+    @Test("Demo 1 (MultiCountryNewsDemo): Bloquea noticias sin login y resuelve en ES, EN, PT y FR tras autenticar", .tags(.precondition, .graph))
     func testDemo1MultiCountryLoginYNoticiasMultiIdioma() {
-        // 1. México (Español): sin sesión falla por @Precondition, tras login resuelve noticias en es-MX
         expectGraph(CountryNewsCoreModule.self, CountryAuthServiceModule.self, MexicoNewsModule.self)
             .dependency(GetLocalizedNewsFeedUseCase.self).preconditionFailure()
             .when { (auth: any CountryAuthRepositoryProtocol) in
@@ -50,7 +116,6 @@ struct AppGraphTests {
                 $0.copy.languageCode == "es-MX" && !$0.headlines.isEmpty
             }
 
-        // 2. USA (English): cumple el mismo contrato que México y resuelve en en-US
         expectWhenCondition(CountryNewsCoreModule.self, CountryAuthServiceModule.self, USANewsModule.self) { (auth: any CountryAuthRepositoryProtocol) in
             auth.login(identifier: "+1 415 890 4210", country: .usa)
         }
@@ -59,7 +124,6 @@ struct AppGraphTests {
             $0.copy.languageCode == "en-US" && $0.copy.breakingTag == "BREAKING NEWS"
         }
 
-        // 3. Brasil (Português) y Francia (Français): cumplen el mismo contrato y resuelven su idioma
         expectWhenCondition(CountryNewsCoreModule.self, CountryAuthServiceModule.self, BrazilNewsModule.self) { (auth: any CountryAuthRepositoryProtocol) in
             auth.login(identifier: "CPF 391.820.118-09", country: .brazil)
         }
@@ -73,23 +137,34 @@ struct AppGraphTests {
         .dependency(GetLocalizedNewsFeedUseCase.self).resolved { $0.copy.languageCode == "fr-FR" }
     }
 
-    // MARK: - Demo 2: App Mockup Fintech (Evolución V1 -> V2 + @BusinessRule A/B Flags)
+    // MARK: - Demo 2: Target `FintechMockupDemo` con Paleta `@Module(0.1)`, `@Module(1.0)`, `@Module(2.0)` + A/B Flags
 
-    @Test("Demo 2 (Fintech V1 -> V2 + A/B Flags): Evoluciona tarjeta a Metal V2 conservando Core Bancario V1 y conmuta A/B Flags", .tags(.businessRule, .graph))
-    func testDemo2FintechEvolucionV1aV2YVariantesAB() {
-        // 1. Con FintechModuleV1: Tarjeta Clásica V1 (isMetalV2 == false)
-        expectGraph(FintechCoreModule.self, FintechSharedFlagsModule.self, FintechModuleV1.self)
+    @Test("Demo 2 (FintechMockupDemo): Paleta @Module(0.1) -> @Module(1.0) -> @Module(2.0) y A/B Flags", .tags(.businessRule, .graph))
+    func testDemo2FintechPaleta01_10_20YVariantesAB() {
+        #expect(FintechModuleV0_1.moduleVersion == "0.1")
+        #expect(FintechModuleV1.moduleVersion == "1.0")
+        #expect(FintechModuleV2.moduleVersion == "2.0")
+
+        // 1. Module(0.1): Starter MVP 0.1
+        expectGraph(FintechCoreModule.self, FintechSharedFlagsModule.self, FintechModuleV0_1.self)
             .dependency(GetFintechDashboardUseCase.self).hasNoPreconditions()
             .dependency(GetFintechDashboardUseCase.self).resolved {
-                $0.cardEngine.fetchCardProduct().isMetalV2 == false &&
-                $0.coreBanking.fetchAccountSummary().currency == "MXN"
+                $0.cardEngine.fetchCardProduct().moduleVersionTag.contains("Module(0.1)")
             }
 
-        // 2. Con FintechModuleV2 (@Module(includes: [FintechModuleV1.self])):
-        //    Cumple el contrato de V1, hereda el Core Bancario de V1, actualiza a Metal V2 y conmuta los 2 A/B Flags en vivo
+        // 2. Module(1.0): hereda Core Bancario de 0.1 y sube a Classic Card 1.0
+        expectGraph(FintechCoreModule.self, FintechSharedFlagsModule.self, FintechModuleV1.self)
+            .matchesContract(of: FintechModuleV0_1.self)
+            .dependency(GetFintechDashboardUseCase.self).resolved {
+                $0.cardEngine.fetchCardProduct().moduleVersionTag.contains("Module(1.0)") &&
+                $0.cardEngine.fetchCardProduct().isMetalV2 == false
+            }
+
+        // 3. Module(2.0): hereda Core Bancario y sube a Metal V2 + conmuta A/B Flags en vivo
         expectGraph(FintechCoreModule.self, FintechSharedFlagsModule.self, FintechModuleV2.self)
             .matchesContract(of: FintechModuleV1.self)
             .dependency(GetFintechDashboardUseCase.self).resolved {
+                $0.cardEngine.fetchCardProduct().moduleVersionTag.contains("Module(2.0)") &&
                 $0.cardEngine.fetchCardProduct().isMetalV2 == true &&
                 $0.layoutVariant.variantCode == "B" &&
                 $0.creditOfferVariant.experimentCode == "Exp-B"
@@ -102,31 +177,5 @@ struct AppGraphTests {
                 $0.layoutVariant.variantCode == "A" &&
                 $0.creditOfferVariant.experimentCode == "Control-A"
             }
-    }
-
-    // MARK: - Demo 3: GitHub Social Developer Profile (@fsaldivar-dev)
-
-    @Test("Demo 3 (GitHub Feed): Inyectar Fake al vuelo y validar precondición del detalle de repositorio", .tags(.graph, .precondition))
-    @MainActor
-    func testDemo3GitHubFeedYPrecondicionDetalle() {
-        expectGraph(ShowcaseCoreModule.self, FakerGitHubModule.self, RepoDetailModule.self)
-            .matchesContract(of: LiveGitHubModule.self)
-            .whenResolved(GitHubRepoItem.self).returns(.flagshipDaggerRepo)
-            .dependency(GetProfileUseCase.self).hasNoPreconditions()
-            .dependency(FeedViewModel.self).resolved()
-            .dependency(RepoDetailInspector.self).preconditionFailure()
-            .when { (auth: any AuthRepositoryProtocol) in
-                auth.loginAsSaldivar()
-            }
-            .dependency(ValidatedSession.self).resolved()
-            .dependency(RepoDetailInspector.self).resolved()
-    }
-
-    @Test("Módulo faltante: sin módulo de servicios falla con unresolvedFailure()", .tags(.graph))
-    func testModuloFaltante() {
-        expectGraph(ShowcaseCoreModule.self)
-            .dependency((any GitHubRepositoryProtocol).self).unresolvedFailure()
-            .dependency(GetProfileUseCase.self).unresolvedFailure()
-            .dependency(GetRepositoriesUseCase.self).unresolvedFailure()
     }
 }

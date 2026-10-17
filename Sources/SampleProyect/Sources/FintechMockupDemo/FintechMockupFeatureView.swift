@@ -1,54 +1,64 @@
 //
 //  FintechMockupFeatureView.swift
-//  Features
+//  FintechMockupDemo
 //
-//  Demo 2 · App Mockup de Fintech (Evolución `FintechModuleV1` -> `FintechModuleV2`
-//  con `@Module(includes:)` + `@BusinessRule` A/B Feature Flags en vivo).
+//  Demo 2 · App Mockup de Fintech con Paleta `Module(0.1)`, `Module(1.0)`, `Module(2.0)`
+//  + `@BusinessRule` A/B Feature Flags en vivo.
 //
 
 import SwiftUI
 import DaggerSwift
 import AppFoundation
-import Core
+
+public enum FintechModulePaletteOption: String, CaseIterable, Identifiable, Sendable {
+    case v0_1 = "0.1"
+    case v1_0 = "1.0"
+    case v2_0 = "2.0"
+
+    public var id: String { rawValue }
+
+    public var moduleType: any GraphModule.Type {
+        switch self {
+        case .v0_1: return FintechModuleV0_1.self
+        case .v1_0: return FintechModuleV1.self
+        case .v2_0: return FintechModuleV2.self
+        }
+    }
+
+    public var buttonLabel: String {
+        "Module(\(moduleType.moduleVersion))"
+    }
+}
 
 @MainActor
 public final class FintechMockupViewModel: ObservableObject {
     private let rootContainer: ScopeContainer
     private let flagsRepository: any FintechABFlagsRepositoryProtocol
-    private let v1Module: any GraphModule.Type
-    private let v2Module: any GraphModule.Type
     private var activeFintechScope: ScopeContainer?
 
-    @Published public var isUsingModuleV2: Bool = true
+    @Published public var selectedPalette: FintechModulePaletteOption = .v2_0
     @Published public var isWealthBentoVariantB: Bool = true
     @Published public var isInstantCreditBoostVariantB: Bool = true
     @Published public var dashboard: GetFintechDashboardUseCase
     @Published public var boostActivatedMessage: String? = nil
 
-    public init(
-        rootContainer: ScopeContainer,
-        v1Module: any GraphModule.Type,
-        v2Module: any GraphModule.Type
-    ) throws {
+    public init(rootContainer: ScopeContainer) throws {
         self.rootContainer = rootContainer
         self.flagsRepository = try rootContainer.resolve((any FintechABFlagsRepositoryProtocol).self)
-        self.v1Module = v1Module
-        self.v2Module = v2Module
 
-        let scope = rootContainer.makeChildScope(for: v2Module)
+        let scope = rootContainer.makeChildScope(for: FintechModuleV2.self)
         self.activeFintechScope = scope
         self.dashboard = try scope.resolve(GetFintechDashboardUseCase.self)
         self.isWealthBentoVariantB = flagsRepository.isWealthBentoVariantB
         self.isInstantCreditBoostVariantB = flagsRepository.isInstantCreditBoostVariantB
     }
 
-    public func selectModuleVersion(useV2: Bool) {
-        isUsingModuleV2 = useV2
+    public func selectPalette(_ option: FintechModulePaletteOption) {
+        selectedPalette = option
         boostActivatedMessage = nil
         activeFintechScope?.teardown()
 
-        let selectedModule = useV2 ? v2Module : v1Module
-        let newScope = rootContainer.makeChildScope(for: selectedModule)
+        let newScope = rootContainer.makeChildScope(for: option.moduleType)
         activeFintechScope = newScope
         if let updated = try? newScope.resolve(GetFintechDashboardUseCase.self) {
             dashboard = updated
@@ -114,32 +124,26 @@ public struct FintechMockupFeatureView: View {
     }
 
     public var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    daggerControlLabCard
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                daggerControlLabCard
 
-                    balanceAndCardSection
+                balanceAndCardSection
 
-                    creditOfferABBanner
+                creditOfferABBanner
 
-                    transactionsSection
-                }
-                .padding(16)
+                transactionsSection
             }
-            .navigationTitle("2. Fintech A/B & V1→V2")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
+            .padding(16)
         }
     }
 
-    // MARK: - 1. Panel de Control de Variantes (@Module V1/V2 + @BusinessRule A/B Flags)
+    // MARK: - 1. Paleta de Módulos Module(0.1) | Module(1.0) | Module(2.0) + @BusinessRule A/B Flags
 
     private var daggerControlLabCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Label("Laboratorio en Vivo del Grafo", systemImage: "slider.horizontal.3")
+                Label("Paleta de Versiones @Module", systemImage: "swatchpalette.fill")
                     .font(.caption.weight(.bold))
                     .foregroundStyle(.indigo)
                 Spacer()
@@ -151,17 +155,26 @@ public struct FintechMockupFeatureView: View {
                     .foregroundStyle(.indigo)
             }
 
-            // Selector V1 vs V2 (@Module(includes: [FintechModuleV1.self]))
+            // Paleta de 3 botones: Module(0.1) | Module(1.0) | Module(2.0)
             HStack(spacing: 8) {
-                moduleVersionButton(title: "FintechModule V1 (1.0)", isSelected: !viewModel.isUsingModuleV2) {
-                    withAnimation(.snappy(duration: 0.25)) {
-                        viewModel.selectModuleVersion(useV2: false)
+                ForEach(FintechModulePaletteOption.allCases) { option in
+                    let isSelected = viewModel.selectedPalette == option
+                    Button {
+                        withAnimation(.snappy(duration: 0.25)) {
+                            viewModel.selectPalette(option)
+                        }
+                    } label: {
+                        Text(option.buttonLabel)
+                            .font(.caption.weight(.bold).monospaced())
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .fill(isSelected ? Color.indigo : Color.showcaseSubtleFill)
+                            )
+                            .foregroundStyle(isSelected ? Color.white : Color.primary)
                     }
-                }
-                moduleVersionButton(title: "FintechModule V2 (includes V1)", isSelected: viewModel.isUsingModuleV2) {
-                    withAnimation(.snappy(duration: 0.25)) {
-                        viewModel.selectModuleVersion(useV2: true)
-                    }
+                    .buttonStyle(.plain)
                 }
             }
 
@@ -220,26 +233,10 @@ public struct FintechMockupFeatureView: View {
         )
     }
 
-    private func moduleVersionButton(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.caption.weight(.bold))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 9)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(isSelected ? Color.indigo : Color.showcaseSubtleFill)
-                )
-                .foregroundStyle(isSelected ? Color.white : Color.primary)
-        }
-        .buttonStyle(.plain)
-    }
-
-    // MARK: - 2. Sección de Saldo y Tarjeta (Cambia según Layout A/B y Módulo V1/V2)
+    // MARK: - 2. Sección de Saldo y Tarjeta (Cambia según Module(0.1 / 1.0 / 2.0) y Layout A/B)
 
     private var balanceAndCardSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // Tarjeta de Saldo Principal (Core Bancario heredado desde V1)
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text(summary.holderName)
@@ -260,7 +257,6 @@ public struct FintechMockupFeatureView: View {
                 }
 
                 if layoutVariant.showsWealthAnalyticsChart {
-                    // Variante B (Wealth Bento Pro): muestra gráfica de rendimiento y métricas Bento
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
                             Label(summary.monthlyYieldFormatted, systemImage: "arrow.up.right.circle.fill")
@@ -272,7 +268,6 @@ public struct FintechMockupFeatureView: View {
                                 .foregroundStyle(.green)
                         }
 
-                        // Mini barras visuales de crecimiento mensual
                         HStack(alignment: .bottom, spacing: 8) {
                             ForEach([0.35, 0.48, 0.55, 0.68, 0.82, 1.0], id: \.self) { ratio in
                                 RoundedRectangle(cornerRadius: 4)
@@ -297,7 +292,7 @@ public struct FintechMockupFeatureView: View {
                     .fill(Color.showcaseCardBackground)
             )
 
-            // Tarjeta de Producto (Cambia al instante entre V1 Classic y V2 Black Metal)
+            // Tarjeta de Producto (Cambia al instante entre Module(0.1), Module(1.0) y Module(2.0))
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     Image(systemName: cardProduct.isMetalV2 ? "creditcard.and.123" : "creditcard")
@@ -305,8 +300,8 @@ public struct FintechMockupFeatureView: View {
                     Text(cardProduct.cardTitle)
                         .font(.headline.weight(.bold))
                     Spacer()
-                    Text(cardProduct.isMetalV2 ? "METAL V2" : "CLASSIC V1")
-                        .font(.caption2.weight(.heavy))
+                    Text("Module(\(viewModel.selectedPalette.rawValue))")
+                        .font(.caption2.weight(.heavy).monospaced())
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
                         .background(Capsule().fill(Color.white.opacity(0.2)))
@@ -331,12 +326,19 @@ public struct FintechMockupFeatureView: View {
             .foregroundStyle(.white)
             .background(
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(
-                        cardProduct.isMetalV2
-                            ? LinearGradient(colors: [Color.black, Color.indigo, Color.purple], startPoint: .topLeading, endPoint: .bottomTrailing)
-                            : LinearGradient(colors: [Color.blue, Color.cyan.opacity(0.85)], startPoint: .topLeading, endPoint: .bottomTrailing)
-                    )
+                    .fill(cardGradient)
             )
+        }
+    }
+
+    private var cardGradient: LinearGradient {
+        switch viewModel.selectedPalette {
+        case .v0_1:
+            return LinearGradient(colors: [Color.gray, Color.teal.opacity(0.85)], startPoint: .topLeading, endPoint: .bottomTrailing)
+        case .v1_0:
+            return LinearGradient(colors: [Color.blue, Color.cyan.opacity(0.85)], startPoint: .topLeading, endPoint: .bottomTrailing)
+        case .v2_0:
+            return LinearGradient(colors: [Color.black, Color.indigo, Color.purple], startPoint: .topLeading, endPoint: .bottomTrailing)
         }
     }
 
@@ -406,7 +408,7 @@ public struct FintechMockupFeatureView: View {
 
     private var transactionsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Movimientos Recientes (Core Bancario V1 compartido)")
+            Text("Movimientos Recientes (Core Bancario heredado desde Module(0.1))")
                 .font(.caption.weight(.bold))
                 .foregroundStyle(.secondary)
 

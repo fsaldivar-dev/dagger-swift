@@ -13,7 +13,12 @@ import ObjectiveC
 /// Contrato para módulos de DaggerSwift v2 que registran sus nodos de Dominio, Negocio y Precondiciones
 /// en un `ScopeContainer`. Funciona en SwiftUI, UIKit, AppKit, Background Actors y CLIs.
 public protocol GraphModule: GraphScope {
+    static var moduleVersion: String { get }
     static func register(in container: ScopeContainer)
+}
+
+public extension GraphModule {
+    static var moduleVersion: String { "1.0" }
 }
 
 /// Tipo marcado con `@Inject`: sabe registrarse a sí mismo en el grafo.
