@@ -68,7 +68,7 @@ public enum FranceNewsModule: CountryNewsModuleContract {
     public static func validateSession(auth: any CountryAuthRepositoryProtocol) -> AuthenticatedCountrySession? {
         auth.session(for: .france)
     }
-
+    
     @Scoped
     public static func localeProvider() -> any CountryLocaleProviderProtocol { FranceLocaleProvider() }
 

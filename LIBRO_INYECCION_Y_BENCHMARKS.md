@@ -4,7 +4,7 @@
 
 > **Autor:** Fernando Saldivar (`@fsaldivar-dev`)  
 > **Versión:** DaggerSwift 2.0 · Swift 6 Strict Concurrency  
-> **Suite de Validación Empírica:** [`Test/BenchmarkComparisonTests.swift`](./Test/BenchmarkComparisonTests.swift) y [`Sources/SampleProyect/Tests/AppGraphTests/ArchitectureLinterTests.swift`](./Sources/SampleProyect/Tests/AppGraphTests/ArchitectureLinterTests.swift)
+> **Suite de Validación Empírica:** [`Benchmarks/Tests/DIFrameworksDebateTests/DIFrameworksDebateTests.swift`](./Benchmarks/Tests/DIFrameworksDebateTests/DIFrameworksDebateTests.swift) (`swift test --package-path Benchmarks`) y [`Sources/SampleProyect/Tests/AppGraphTests/ArchitectureLinterTests.swift`](./Sources/SampleProyect/Tests/AppGraphTests/ArchitectureLinterTests.swift)
 
 ---
 
@@ -101,96 +101,116 @@ En aplicaciones reales, un módulo cambia en dos ejes:
 
 ---
 
-## Capítulo 3: Anatomía de la Competencia y los 5 Huecos que Dejan Abiertos
+## Capítulo 3: Debate Cara a Cara contra las Librerías Reales (`Point-Free TCA`, `Factory`, `Swinject`)
 
-En [`Test/BenchmarkComparisonTests.swift`](./Test/BenchmarkComparisonTests.swift) sometimos los patrones de las librerías más usadas en Swift a pruebas automatizadas para demostrar exactamente qué huecos arquitectónicos dejan abiertos:
+En lugar de comparar con simulaciones, creamos un paquete SPM independiente ([`Benchmarks/Package.swift`](./Benchmarks/Package.swift)) que descarga e importa las librerías reales:
+- **`pointfreeco/swift-dependencies`** (usada en **TCA / The Composable Architecture**)
+- **`hmlongco/Factory`** (Michael Long)
+- **`Swinject/Swinject`**
+- **`DaggerSwift`**
+
+En [`DIFrameworksDebateTests.swift`](./Benchmarks/Tests/DIFrameworksDebateTests/DIFrameworksDebateTests.swift) ejecutamos dos rondas de pruebas de fallo cruzado:
+- **Round 1:** Obligamos a fallar a `Point-Free TCA`, `Factory` y `Swinject` en los escenarios donde el diseño de `DaggerSwift` gana.
+- **Round 2:** Obligamos a fallar a `DaggerSwift` en los escenarios donde el diseño de `Point-Free TCA`, `Factory` o `Swinject` nos gana.
 
 ### Matriz Comparativa de Capacidades
 
-| Capacidad Arquitectónica | Swinject / Resolver | Factory | swift-dependencies | Needle (Uber) | **DaggerSwift v2** |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **Verificación en Tiempo de Compilación** | ❌ No (Runtime) | ⚠️ Parcial | ⚠️ Parcial | ✅ Sí | **✅ Sí (`@Module` Contracts + `@Scope`)** |
-| **Cero contaminación en `Domain` (`init` puro)** | ❌ `@Injected` | ❌ `@Injected` | ❌ `@Dependency` | ✅ Sí | **✅ Sí (`@Inject` genera `init` limpio)** |
-| **Nodos `@Precondition` (Cortocircuito de Sesión)** | ❌ No existe | ❌ No existe | ❌ No existe | ❌ No existe | **✅ Sí (`@Precondition` nativo)** |
-| **Nodos `@BusinessRule` (A/B Flags en el Grafo)** | ❌ Manual | ❌ Manual | ❌ Manual | ❌ Manual | **✅ Sí (`@BusinessRule` auditable)** |
-| **Paleta de Versiones `@Module(0.1 / 1.0 / 2.0)`** | ❌ No existe | ❌ No existe | ❌ No existe | ❌ No existe | **✅ Sí (`@Scope` + `ModulePalette`)** |
-| **`teardown()` Jerárquico + Auditoría de Retain Cycles** | ❌ No audita leaks | ❌ No audita leaks | ❌ No audita leaks | ❌ No audita leaks | **✅ Sí (`WeakObjectBox` devuelve fugas)** |
-| **DSL de Testing del Grafo sin levantar UI** | ❌ No | ❌ No | ❌ No | ❌ No | **✅ Sí (`expectGraph` / `matchesContract`)** |
-| **Tiempo de Compilación del Plugin de Macros** | N/A | N/A | Lento (`swift-syntax`) | Generador externo | **⚡ `< 0.3s` (JSON Plugin nativo Cero-Deps)** |
-
----
-
-### Los 5 Huecos Demostrados en Código ([`BenchmarkComparisonTests.swift`](./Test/BenchmarkComparisonTests.swift))
-
-#### Hueco 1: El Crash Silencioso en Producción (`testGap1RuntimeFailureVsCompileTimeSafety`)
-- **Qué hacen Swinject / Resolver:** Guardan fábricas en un diccionario indexado por tipo. Si olvidas registrar un repositorio, el proyecto compila limpio y devuelve `nil` (o hace crash con `resolve()!`) cuando el usuario toca el botón en producción.
-- **Qué hace DaggerSwift v2:** La resolución en la app es explícita a través del contrato del módulo (`BenchModuleV1.makeUseCase()`). Si falta un método o cambia un tipo, **Xcode detiene la compilación inmediatamente**. Y para el grafo declarativo, `expectGraph(...).matchesContract(of:)` valida todas las ramas en milisegundos durante los tests.
-
-#### Hueco 2: Instanciación Prematura sin Sesión (`testGap2PreconditionShortCircuit`)
-- **Qué hacen otras librerías:** No distinguen entre una dependencia técnica (`ApiClient`) y una precondición de estado (`ValidatedSession`). Si entra un Deep Link cuando no hay sesión, instancian los repositorios y ViewModels de la pantalla privada antes de darse cuenta de que no había token.
-- **Qué hace DaggerSwift v2:** El nodo `@Precondition` evalúa primero la sesión. En nuestro test `testGap2PreconditionShortCircuit`, cuando la sesión es `nil`, el contador `repositoryAllocations` permanece en **`0`**. Ni un solo objeto del sub-árbol protegido se aloja en memoria.
-
-#### Hueco 3: El Contenedor Global Inmortal (`testGap3MemoryLifecycleAndLeakAudit`)
-- **Qué hacen los contenedores tradicionales:** Cuando registras algo como `.singleton` o `.cached` en un contenedor global, esa instancia se queda retenida en el diccionario hasta que el sistema operativo mata la app, aunque el usuario haya salido del flujo de `Préstamos` o haya cambiado de país hace 20 minutos.
-- **Qué hace DaggerSwift v2:** Cada flujo vive en su propio `GraphScope`. Al hacer **UnPlug** (`previousModule.teardownScope()` o `featureScope.teardown()`), DaggerSwift:
-  1. Invoca `onScopeTeardown()` (`ScopeDisposable`) para cancelar `Task`s o streams activos.
-  2. Vacía el diccionario del Scope hijo.
-  3. Revisa su arreglo interno de referencias débiles (`WeakObjectBox`) y te reporta por nombre si algún objeto quedó vivo por un *retain cycle* (`[self]` fuerte en un closure).
-
-#### Hueco 4: Contaminación de la Capa `Domain` con Property Wrappers (`@Injected` / `@Dependency`)
-- **Qué hacen Factory y swift-dependencies:** Te invitan a escribir `@Injected(\.userRepository) var repo` o `@Dependency(\.apiClient) var api` **adentro** de tus casos de uso y ViewModels. Eso acopla tu capa `Domain` al framework de DI y hace que el estado global se comparta entre tests si olvidas sobrescribir el contenedor.
-- **Qué hace DaggerSwift v2:** `@Inject` genera un `public init(repository: any BenchRepositoryProtocol)` estándar de Swift. En tus Unit Tests (`AppUnitTests.swift`), instancias `GetProfileUseCase(gitHubRepository: FakerGitHubRepository())` como un `struct` normal de Swift, sin tocar ningún contenedor global.
-
-#### Hueco 5: Mutación Ciega vs. Evolución Versionada (`@Module(0.1 -> 1.0 -> 2.0)`)
-- **Qué hacen otras librerías:** Para cambiar de la versión `1.0` a la `2.0` de un flujo, sobrescriben closures en caliente sobre el mismo contenedor mutable (`container.register { ... }`), perdiendo trazabilidad de qué versión está activa.
-- **Qué hace DaggerSwift v2:** Cada versión es un tipo inmutable (`FintechModuleV0_1`, `FintechModuleV1`, `FintechModuleV2`) conectado mediante `@Scope`. Puedes alternar entre `0.1`, `1.0` y `2.0` en vivo haciendo **Plug & UnPlug** determinista.
-
----
-
-## Capítulo 4: Benchmarks Empíricos y Pruebas de Estrés (10,000 Iteraciones)
-
-Ejecutando [`swift test --filter BenchmarkComparisonTests`](./Test/BenchmarkComparisonTests.swift) en Apple Silicon (`arm64e-apple-macos`), medimos con `ContinuousClock` el tiempo real de 10,000 resoluciones completas (`ApiClient -> Repository -> UseCase -> execute()`):
-
-| Escenario Medido (10,000 iteraciones en Debug) | Tiempo Total Medido | Costo por Resolución | Asignaciones en Heap de DI | Riesgo de Crash Runtime |
+| Capacidad Arquitectónica | Swinject | Factory | Point-Free `swift-dependencies` (TCA) | **DaggerSwift v2** |
 | :--- | :---: | :---: | :---: | :---: |
-| **1. DaggerSwift Modo Explícito (`@Module` + `@Scope` + `@Inject`)** | **`1.74 ms`** (`0.00174 s`) | **`~174 ns`** | **0 bytes** (Stack / Direct Call) | **0% (Verificado al compilar)** |
-| **2. Service Locator Dinámico (`String(reflecting:)` + Lock + Cast)** | **`13.62 ms`** (`0.01362 s`) | **`~1.36 µs`** | Lookup en tabla Hash + Lock | **Alto (`nil` / `as!` en runtime)** |
-| **3. DaggerSwift Motor DAG (`ScopeContainer` + Detección de Ciclos + Scopes)** | **`23.05 ms`** (`0.02305 s`) | **`~2.30 µs`** | Pila DFS + Auditoría `WeakObjectBox` | **Controlado (`GraphError` tipado)** |
-| **4. Cortocircuito `@Precondition` (1,000 bloqueos en frío)** | **`3.82 ms`** (`0.00382 s`) | **`~3.82 µs`** | **0 instancias hijas creadas** | **0% (`unmetPrecondition`)** |
-
-### ¿Qué demuestran estos números?
-
-1. **El Modo Explícito de DaggerSwift (`~42 nanosegundos` por resolución) es más de 20 veces más rápido que un Service Locator dinámico**, porque el compilador de Swift 6 despacha la llamada estáticamente y optimiza los `struct` de los `UseCases` en el stack sin tocar locks ni diccionarios.
-2. **El Motor DAG (`ScopeContainer`) cuesta apenas `~1.1 microsegundos`** a cambio de darte detección de ciclos infinitos (`A -> B -> A`), validación de la Regla de Oro de Scopes jerárquicos, evaluación de `@Precondition`, `@BusinessRule` y rastreo de fugas de memoria con `WeakObjectBox`.
-3. **Lo mejor de ambos mundos:** Usas la **Resolución Explícita** en el código de producción de tus features (máxima velocidad y seguridad de compilación, cero `try!`/`try?`) y usas el **Motor DAG (`expectGraph`)** en tu suite de pruebas (`AppGraphTests`) para auditar contratos, precondiciones y memoria.
+| **Verificación en Tiempo de Compilación** | ❌ No (`nil` en Runtime) | ⚠️ Parcial | ⚠️ Falla en Runtime si falta `testValue` | **✅ Sí (`@Module` Contracts + `@Scope`)** |
+| **Cero contaminación en `Domain` (`init` puro)** | ❌ `resolver.resolve` | ❌ `@Injected` | ❌ `@Dependency` dentro de `Domain` | **✅ Sí (`@Inject` genera `init` limpio)** |
+| **Override `@TaskLocal` profundo sin tocar `init`** | ❌ No | ❌ No | **✅ Sí (`withDependencies`)** | ❌ Exige constructor o `ScopeContainer` |
+| **Weak Cache `.shared` automático sin `teardown()`** | ❌ No | **✅ Sí (`.shared`)** | ❌ No | ❌ `@Scoped` exige llamar a `teardown()` |
+| **Registro múltiple por `name:` String + `argument:`** | **✅ Sí (`name:`)** | ⚠️ Parcial | ❌ No | ❌ Indexa por `TypeKey(T.self)` |
+| **Nodos `@Precondition` (Cortocircuito de Sesión)** | ❌ No existe | ❌ No existe | ❌ No existe | **✅ Sí (`@Precondition` nativo, 0 allocs)** |
+| **Nodos `@BusinessRule` (A/B Flags en el Grafo)** | ❌ Manual | ❌ Manual | ❌ Manual | **✅ Sí (`@BusinessRule` auditable)** |
+| **Herencia de Evolución `@Module(0.1 -> 1.0 -> 2.0)`** | ❌ No existe | ❌ No existe | ❌ No existe | **✅ Sí (`@Scope` + `includes:`)** |
+| **`teardown()` Jerárquico + Auditoría de Retain Cycles** | ❌ No audita leaks | ❌ No audita leaks | ❌ No audita leaks | **✅ Sí (`WeakObjectBox` devuelve fugas)** |
 
 ---
 
-## Capítulo 5: Puntos Fuertes y Puntos Débiles (Honestidad Técnica)
+### Round 1: Obligando a Fallar a las Otras Librerías (Donde Gana `DaggerSwift`)
 
-Ninguna herramienta de ingeniería es mágica. Un arquitecto o Tech Lead necesita conocer tanto las fortalezas como los límites reales de `DaggerSwift v2`:
+1. **`Round 1.1` — `Swinject` falla en Runtime al olvidar un registro (`testSwinjectFailsAtRuntimeOnMissingRegistration`):**
+   - Si registras `BenchUseCase` en `Swinject.Container()` pero olvidas registrar `BenchRepositoryProtocol`, **el proyecto compila con 0 errores** y `swinject.resolve((any BenchRepositoryProtocol).self)` devuelve `nil` en producción.
+   - En `DaggerSwift`, `BenchModuleContract` + `@Module` detiene la compilación en Xcode si falta cualquier dependencia.
+2. **`Round 1.2` — `Point-Free swift-dependencies` (TCA) falla en Runtime cuando olvidas `withDependencies` (`testPointFreeDependenciesFailsWhenUnconfiguredInTest`):**
+   - Cuando un `UseCase` usa `@Dependency(\.unconfiguredRepo)` y alguien lo ejecuta sin envolverlo en `withDependencies { ... }`, el código compila sin problemas pero **dispara un Issue/Fallo en Runtime** (`withKnownIssue`). Además, obliga a que tu capa `Domain` haga `import Dependencies`.
+   - En `DaggerSwift`, `@Inject` sintetiza un `public init(repository:)` puro sin acoplar `Domain` a ningún framework.
+3. **`Round 1.3` — `Factory` contamina el estado global cuando olvidas `.reset()` (`testFactoryGlobalStatePollutionWhenResetIsForgotten`):**
+   - Si la Pantalla A o el Test A hace `Container.shared.benchRepo.register { ... }` y olvida llamar a `Container.shared.manager.reset()`, la Pantalla B recibe el Mock contaminado (`420` en lugar de `42`).
+   - En `DaggerSwift`, cada `ScopeContainer` y cada variante `@Module` es independiente.
+4. **`Round 1.4` — Las 3 librerías desperdician memoria instanciando objetos antes de validar la sesión (`testAllThreeLibrariesAllocateDependenciesBeforeCheckingPreconditions`):**
+   - En `Swinject`, `Factory` y `Point-Free TCA`, aunque `sessionIsNil == true`, las tres alojan `BenchRepositoryImpl` en RAM (`allocations == 1`) antes de que el consumidor pueda verificar la sesión.
+   - En `DaggerSwift`, `@Precondition` hace cortocircuito en la raíz del sub-grafo y `daggerRepoAllocations` permanece en **`0`**.
+5. **`Round 1.5` — Ninguna de las 3 detecta un Retain Cycle al cerrar una pantalla (`testMemoryLeakDetectionOnFeatureTeardown`):**
+   - Creamos `LeakyFeatureViewModel` con `self.selfRetainCycle = { _ = self }`. Ni `Swinject`, ni `Factory`, ni `Point-Free TCA` tienen auditoría de memoria al cerrar una pantalla.
+   - En `DaggerSwift`, `featureScope.teardown()` devuelve `["LeakyFeatureViewModel"]` gracias a `WeakObjectBox`.
+6. **`Round 1.6` — Bloqueo de *Captive Dependencies* (`testCaptiveDependencyScopeHierarchyViolation`):**
+   - Si intentas resolver un componente `@Scoped` de `BenchFeatureScope` directamente desde el `root` (`GlobalScope`) sin abrir `makeChildScope(for: BenchFeatureScope.self)`, `DaggerSwift` lanza `GraphError.scopeViolation`.
 
-### ✅ Puntos Fuertes (Lo que ganamos)
+---
 
-1. **Compilación Instantánea (`< 0.3s` para el plugin de macros):**
-   - A diferencia de librerías que importan `swift-syntax` (que agrega 15–40 segundos de compilación limpia y cientos de megabytes en derivado), `DaggerSwiftMacros` implementa el protocolo JSON `HostToPluginMessage` directamente sobre `Foundation`.
-2. **Desacoplamiento Puro en `Domain` y `Presentation`:**
-   - Tus `UseCases` y `ViewModels` usan `@Inject`, que sintetiza inicializadores estándar. Puedes probar cualquier clase en un Unit Test sin inicializar `DaggerSwift`.
-3. **Semántica de Producto Integrada (`@BusinessRule`, `@Precondition`, `@Scope` Palette):**
-   - El grafo habla el idioma del negocio: sabe qué es un experimento A/B (`@BusinessRule`), qué es un candado de sesión por país (`@Precondition`) y qué es una evolución `Module(0.1) -> Module(1.0) -> Module(2.0)`.
-4. **Higiene de Memoria Auditable (`teardownScope()`):**
-   - Es la única librería en Swift que al desmontar un módulo te devuelve un `[String]` con las clases que sufrieron un *retain cycle*.
+### Round 2: Obligando a Fallar a `DaggerSwift` (Donde Ganan Ellos — Honestidad Técnica)
 
-### ⚠️ Puntos Débiles y Trade-offs (Lo que debes tener en cuenta)
+1. **`Round 2.1` — Donde `Point-Free swift-dependencies` (TCA) le gana a `DaggerSwift` (`testWherePointFreeBeatsDaggerSwiftDeepTreeTaskLocalOverride`):**
+   - **Su victoria:** Si tienes `Level1 -> Level2 -> TcaCoupledUseCase`, con `withDependencies { $0.benchRepo = ... } operation: { Level1().run() }` puedes inyectar un mock a 3 niveles de profundidad mediante `@TaskLocal` **sin pasar parámetros por los constructores de `Level1` ni de `Level2`**.
+   - **Cómo obligamos a fallar a `DaggerSwift`:** En modo explícito debes pasar las dependencias por `init` o módulo. Y en modo dinámico (`ScopeContainer`), si creas `ScopeContainer.root(modules: [])` olvidando registrar el módulo y llamas a `try emptyDaggerScope.resolve(BenchUseCase.self)`, **`DaggerSwift` también falla en Runtime** lanzando `GraphError.missingProvider`.
+2. **`Round 2.2` — Donde `Factory` le gana a `DaggerSwift` (`testWhereFactoryBeatsDaggerSwiftAutomaticWeakSharedScope`):**
+   - **Su victoria:** El scope `.shared` de `Factory` mantiene una referencia `weak` en caché: mientras las vistas estén vivas comparten la misma instancia (`ref1 === ref2`), y en cuanto sale del bloque `do { ... }` **se libera sola de RAM (`weakFactoryObserver == nil`) sin llamar a ningún `teardown()`**.
+   - **Cómo obligamos a fallar a `DaggerSwift`:** En `DaggerSwift`, `@Scoped` retiene fuertemente la instancia en `scopedInstances` hasta que alguien llame a `featureScope.teardown()`. Si el desarrollador olvida llamar a `teardown()`, el objeto se queda retenido en RAM (`#expect(weakDaggerObserver != nil)`).
+3. **`Round 2.3` — Donde `Swinject` le gana a `DaggerSwift` (`testWhereSwinjectBeatsDaggerSwiftNamedAndParameterizedRegistrations`):**
+   - **Su victoria:** `Swinject` permite registrar el mismo protocolo múltiples veces en el mismo contenedor usando `name: "mexico"` y `name: "usa"` y pasar argumentos dinámicos en el momento de resolver (`swinject.resolve(..., name: "mexico", argument: "cdmx")`).
+   - **Cómo obligamos a fallar a `DaggerSwift`:** `ScopeContainer` indexa por `TypeKey(T.self)` (`ObjectIdentifier`). Si llamas dos veces a `daggerScope.provide((any BenchApiClientProtocol).self)` en el mismo contenedor, **el segundo registro aplasta silenciosamente al primero**.
 
-1. **Las Macros de Swift tienen Visibilidad de Archivo Único (Single-File AST):**
-   - En Swift, una macro (`@Module` o `@Inject`) solo puede leer el código sintáctico de la declaración donde está colocada; no tiene acceso a la tabla de símbolos global de otros archivos como lo tiene el procesador de anotaciones `kapt`/`ksp` de Dagger en Kotlin/Java.
-   - **Cómo lo mitigamos:** Combinamos contratos de protocolo (`FintechModuleContract`, `CountryNewsModuleContract`) para verificación estática del compilador con `expectGraph(...).matchesContract(of:)` en [`DaggerSwiftTesting`](./Sources/DaggerSwiftTesting/DaggerSwiftTesting.swift) para validar el grafo completo en los tests.
-2. **Disciplina en Contratos para Evitar `try!` / `try?`:**
-   - Si usas únicamente `ScopeContainer.resolve()` dinámico en las vistas, caerías en el mismo problema de `try!` que las demás librerías.
-   - **Cómo lo mitigamos:** Establecimos el patrón **Plug & UnPlug con Contratos Estáticos** y creamos el linter automático [`ArchitectureLinterTests.swift`](./Sources/SampleProyect/Tests/AppGraphTests/ArchitectureLinterTests.swift) que prohíbe `try!`, `try?` y `ScopeContainer` en el código de la app.
-3. **Parser Sintáctico Ligero en `DaggerSwiftMacrosPlugin`:**
-   - Para mantener cero dependencias externas (`0` paquetes terceros), nuestro plugin usa un analizador sintáctico ligero propio. Soporta todas las declaraciones estándar de `@Module`, `@Inject`, `@Scope`, genéricos y protocolos (`any Protocol`), pero si alguien escribe sintaxis exótica anidada dentro de una propiedad almacenada podría requerir un `init` explícito.
+---
+
+## Capítulo 4: Benchmarks Empíricos y Gráfico Visual (10,000 Iteraciones Reales)
+
+Ejecutando `swift test --package-path Benchmarks` en Apple Silicon (`arm64e-apple-macos`), medimos con `ContinuousClock` 10,000 resoluciones completas (`ApiClient -> Repository -> UseCase -> execute()`) en las 4 librerías reales:
+
+```text
+╔══════════════════════════════════════════════════════════════════════════════════════════════╗
+║     🥊 DEBATE EMPÍRICO Y BENCHMARK REAL (10,000 RESOLUCIONES EN PAQUETE SPM DEDICADO)        ║
+╠══════════════════════════════════════════════════════════════════════════════════════════════╣
+║ TIEMPO DE EJECUCIÓN ORDENADO (Menor barra = Más rápido):                                     ║
+  1. DaggerSwift Explícito (@Module/@Scope) |   1.46 ms (  1.0x) |█
+  2. Point-Free swift-dependencies (TCA)    |  11.40 ms (  7.8x) |██████
+  3. Swinject (Dynamic Dictionary)          |  21.35 ms ( 14.7x) |████████████
+  4. DaggerSwift Motor DAG (ScopeContainer) |  21.74 ms ( 14.9x) |█████████████
+  5. Factory (Container.shared)             |  49.55 ms ( 34.0x) |██████████████████████████████
+╚══════════════════════════════════════════════════════════════════════════════════════════════╝
+```
+
+```mermaid
+xychart-beta
+    title "Tiempo de 10,000 Resoluciones en ms (Menor es Mejor)"
+    x-axis ["DaggerSwift Explícito", "Point-Free (TCA)", "Swinject", "DaggerSwift DAG", "Factory"]
+    y-axis "Milisegundos (ms)" 0 --> 55
+    bar [1.46, 11.40, 21.35, 21.74, 49.55]
+```
+
+| Posición | Librería / Modo (10,000 iteraciones) | Tiempo Total | Latencia / Resolución | Ratio vs. #1 |
+| :---: | :--- | :---: | :---: | :---: |
+| **🥇 1** | **DaggerSwift Modo Explícito (`@Module` + `@Scope` + `@Inject`)** | **`1.46 ms`** | **`~146 ns`** | **`1.0x` (Base)** |
+| **🥈 2** | **Point-Free `swift-dependencies` (`@Dependency` + `@TaskLocal`)** | **`11.40 ms`** | **`~1.14 µs`** | `7.8x` |
+| **🥉 3** | **Swinject (`Swinject.Container` con `.container` + `.transient`)** | **`21.35 ms`** | **`~2.13 µs`** | `14.7x` |
+| **4** | **DaggerSwift Motor DAG (`ScopeContainer` + CycleCheck + WeakBox)** | **`21.74 ms`** | **`~2.17 µs`** | `14.9x` |
+| **5** | **Factory (`Container.shared` con `.singleton` + transient)** | **`49.55 ms`** | **`~4.95 µs`** | `34.0x` |
+
+---
+
+## Capítulo 5: Síntesis de Puntos Fuertes y Puntos Débiles
+
+### ✅ Cuándo elegir `DaggerSwift v2`
+- Quieres **Clean Architecture estricta** donde `Domain` no importe ninguna librería de terceros ni use `@Dependency` / `@Injected`.
+- Necesitas modelar **Variantes Multi-Country**, **Evolución de Producto (`0.1 -> 1.0 -> 2.0`) con herencia real (`includes:`)** y **Experimentos A/B (`@BusinessRule`)**.
+- Necesitas **Cortocircuito por `@Precondition`** (no alocar pantallas privadas si no hay sesión) y **Auditoría de Memory Leaks (`teardownScope()`)** al desmontar features.
+
+### ⚠️ Cuándo otra librería puede ajustarse mejor
+- Si toda tu arquitectura ya está construida sobre **The Composable Architecture (TCA)** de Point-Free y prefieres propagar dependencias implícitamente por `@TaskLocal` (`withDependencies`), **`swift-dependencies`** es más ergonómica para ese paradigma.
+- Si prefieres instanciar ViewModels directamente dentro de las vistas SwiftUI con `init()` vacío (`@Injected(\.service)`) y quieres un scope `.shared` con referencias débiles automáticas sin gestionar `teardownScope()`, **`Factory`** brilla en ese caso.
+- Si necesitas un diccionario completamente dinámico en runtime donde registres múltiples instancias del mismo protocolo bajo llaves `String` (`name: "mx"`) pasando argumentos dinámicos sin tipos de precondición, **`Swinject`** ofrece esa flexibilidad dinámica.
 
 ---
 
