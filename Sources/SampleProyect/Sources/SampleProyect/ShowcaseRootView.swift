@@ -42,7 +42,7 @@ public struct ShowcaseRootView: View {
             CountryNewsCoreModule.self,
             CountryAuthServiceModule.self
         ])
-        let countryVM = try! CountryNewsPortalViewModel(rootContainer: countryRoot)
+        let countryVM = try! CountryNewsPortalViewModel(from: countryRoot)
         _countryNewsVM = StateObject(wrappedValue: countryVM)
 
         // 2. Grafo Demo 2: Fintech Mockup (Paleta Module(0.1), Module(1.0), Module(2.0) + A/B Flags)
@@ -50,7 +50,7 @@ public struct ShowcaseRootView: View {
             FintechCoreModule.self,
             FintechSharedFlagsModule.self
         ])
-        let finVM = try! FintechMockupViewModel(rootContainer: fintechRoot)
+        let finVM = try! FintechMockupViewModel(from: fintechRoot)
         _fintechVM = StateObject(wrappedValue: finVM)
 
         // 3. Grafo Demo 3: GitHub Social Developer Profile (@fsaldivar-dev)

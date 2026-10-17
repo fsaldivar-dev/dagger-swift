@@ -31,6 +31,9 @@ public struct CountryNewsFeatureView: View {
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
+            .task {
+                await viewModel.loadInitialCountry()
+            }
         }
     }
 

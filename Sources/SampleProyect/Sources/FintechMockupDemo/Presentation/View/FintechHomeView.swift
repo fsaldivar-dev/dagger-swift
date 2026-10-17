@@ -13,41 +13,32 @@ public struct FintechMockupFeatureView: View {
         self.viewModel = viewModel
     }
 
-    private var summary: FintechAccountSummary {
-        viewModel.dashboard.coreBanking.fetchAccountSummary()
-    }
-
-    private var cardProduct: FintechCardProduct {
-        viewModel.dashboard.cardEngine.fetchCardProduct()
-    }
-
-    private var layoutVariant: any FintechHomeLayoutVariantProtocol {
-        viewModel.dashboard.layoutVariant
-    }
-
-    private var creditVariant: any FintechCreditOfferVariantProtocol {
-        viewModel.dashboard.creditOfferVariant
-    }
-
     public var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                paletteAndABCard
+            if let dashboard = viewModel.dashboard {
+                VStack(alignment: .leading, spacing: 16) {
+                    paletteAndABCard(dashboard: dashboard)
 
-                balanceAndCardSection
+                    balanceAndCardSection(dashboard: dashboard)
 
-                creditOfferABBanner
+                    creditOfferABBanner(dashboard: dashboard)
 
-                transactionsSection
+                    transactionsSection
+                }
+                .padding(16)
             }
-            .padding(16)
+        }
+        .task {
+            viewModel.loadInitialDashboard()
         }
     }
 
     // MARK: - 1. Selector Limpio de Variantes Module(0.1 / 1.0 / 2.0) y A/B Flags
 
-    private var paletteAndABCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
+    private func paletteAndABCard(dashboard: GetFintechDashboardUseCase) -> some View {
+        let layoutVariant = dashboard.layoutVariant
+        let creditVariant = dashboard.creditOfferVariant
+        return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 ForEach(FintechModulePaletteOption.allCases) { option in
                     let isSelected = viewModel.selectedPalette == option
@@ -121,8 +112,11 @@ public struct FintechMockupFeatureView: View {
 
     // MARK: - 2. Saldo y Tarjeta
 
-    private var balanceAndCardSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+    private func balanceAndCardSection(dashboard: GetFintechDashboardUseCase) -> some View {
+        let summary = dashboard.coreBanking.fetchAccountSummary()
+        let cardProduct = dashboard.cardEngine.fetchCardProduct()
+        let layoutVariant = dashboard.layoutVariant
+        return VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text(summary.holderName)
@@ -222,8 +216,9 @@ public struct FintechMockupFeatureView: View {
 
     // MARK: - 3. Oferta de Crédito A/B
 
-    private var creditOfferABBanner: some View {
-        VStack(alignment: .leading, spacing: 10) {
+    private func creditOfferABBanner(dashboard: GetFintechDashboardUseCase) -> some View {
+        let creditVariant = dashboard.creditOfferVariant
+        return VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text(creditVariant.bannerTitle)
                     .font(.subheadline.weight(.bold))
