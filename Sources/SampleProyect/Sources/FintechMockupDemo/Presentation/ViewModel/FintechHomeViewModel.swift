@@ -2,8 +2,8 @@
 //  FintechHomeViewModel.swift
 //  FintechMockupDemo · Presentation -> ViewModel (MVVM)
 //
-//  Usa `FintechScope.Palette` (`ModulePalette` de la librería `DaggerSwift`, estilo `CodingKeys`)
-//  y resolución explícita en compile-time (Cero `ScopeContainer`, cero `try!`, cero `try?`).
+//  Cumple SRP y DIP (SOLID): depende únicamente de abstracciones (`GetFintechDashboardUseCase`,
+//  `FintechABFlagsRepositoryProtocol`, `FintechComposing`) inyectadas con `@Inject`.
 //
 
 import SwiftUI
@@ -14,6 +14,7 @@ import DaggerSwift
 public final class FintechMockupViewModel: ObservableObject {
     public let initialDashboard: GetFintechDashboardUseCase
     public let flagsRepository: any FintechABFlagsRepositoryProtocol
+    public let composer: any FintechComposing
 
     @Published public var selectedPalette: FintechScope.Palette = .v2_0
     @Published public var isWealthBentoVariantB: Bool = true
@@ -35,7 +36,7 @@ public final class FintechMockupViewModel: ObservableObject {
     public func selectPalette(_ option: FintechScope.Palette) {
         selectedPalette = option
         boostActivatedMessage = nil
-        let updated = Self.makeDashboard(for: option, flags: flagsRepository)
+        let updated = composer.makeDashboard(for: option, flags: flagsRepository)
         dashboard = updated
         Task {
             self.transactions = await updated.coreBanking.fetchRecentTransactions()
@@ -46,7 +47,7 @@ public final class FintechMockupViewModel: ObservableObject {
         let next = !isWealthBentoVariantB
         isWealthBentoVariantB = next
         flagsRepository.setWealthBentoVariantB(next)
-        dashboard = Self.makeDashboard(for: selectedPalette, flags: flagsRepository)
+        dashboard = composer.makeDashboard(for: selectedPalette, flags: flagsRepository)
     }
 
     public func toggleCreditOfferAB() {
@@ -54,7 +55,7 @@ public final class FintechMockupViewModel: ObservableObject {
         isInstantCreditBoostVariantB = next
         flagsRepository.setInstantCreditBoostVariantB(next)
         boostActivatedMessage = nil
-        dashboard = Self.makeDashboard(for: selectedPalette, flags: flagsRepository)
+        dashboard = composer.makeDashboard(for: selectedPalette, flags: flagsRepository)
     }
 
     public func triggerCreditOfferCTA() {
@@ -64,18 +65,5 @@ public final class FintechMockupViewModel: ObservableObject {
         } else {
             boostActivatedMessage = "📋 Solicitud enviada a revisión (24-48 hrs)."
         }
-    }
-
-    public nonisolated static func makeDashboard(
-        for option: FintechScope.Palette,
-        flags: any FintechABFlagsRepositoryProtocol
-    ) -> GetFintechDashboardUseCase {
-        let module = FintechScope.module(for: option)
-        return GetFintechDashboardUseCase(
-            coreBanking: module.coreBanking(),
-            cardEngine: module.cardEngine(),
-            layoutVariant: FintechCoreModule.provideHomeLayoutVariant(flags: flags),
-            creditOfferVariant: FintechCoreModule.provideCreditOfferVariant(flags: flags)
-        )
     }
 }

@@ -12,10 +12,10 @@ import AppFoundation
 import Core
 
 public struct FeedView: View {
-    @ObservedObject private var viewModel: FeedViewModel
+    @StateObject private var viewModel: FeedViewModel
 
     public init(viewModel: FeedViewModel) {
-        self.viewModel = viewModel
+        self._viewModel = StateObject(wrappedValue: viewModel)
     }
 
     public var body: some View {

@@ -7,10 +7,10 @@ import SwiftUI
 import AppFoundation
 
 public struct CountryNewsFeatureView: View {
-    @ObservedObject private var viewModel: CountryNewsPortalViewModel
+    @StateObject private var viewModel: CountryNewsPortalViewModel
 
     public init(viewModel: CountryNewsPortalViewModel) {
-        self.viewModel = viewModel
+        self._viewModel = StateObject(wrappedValue: viewModel)
     }
 
     public var body: some View {
