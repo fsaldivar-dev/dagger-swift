@@ -3,8 +3,8 @@
 //  Features
 //
 //  Capa Features · Sub-scope de Detalle de Repositorio (RepoDetailModule).
-//  Al declarar `let session: ValidatedSession`, el grafo exige automáticamente
-//  que la @Precondition se cumpla antes de instanciar `RepoDetailInspector`.
+//  Provee `RepoDetailInspector` atado al ciclo de vida de la pantalla de detalle
+//  y protegido por la @Precondition `ValidatedSession`.
 //
 
 import Foundation
@@ -13,7 +13,16 @@ import AppFoundation
 import Core
 
 @Module
-public enum RepoDetailModule {}
+public enum RepoDetailModule {
+    @Scoped
+    public static func repoDetailInspector(
+        session: ValidatedSession,
+        repo: GitHubRepoItem,
+        gitHubRepository: any GitHubRepositoryProtocol
+    ) -> RepoDetailInspector {
+        RepoDetailInspector(session: session, repo: repo, gitHubRepository: gitHubRepository)
+    }
+}
 
 @Inject(scope: RepoDetailModule.self)
 public final class RepoDetailInspector: ScopeDisposable, @unchecked Sendable {

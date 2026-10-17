@@ -1,9 +1,36 @@
 import Testing
+import DaggerSwift
 import AppFoundation
 import Core
 import Services
 import Features
 @testable import SampleProyect
+
+// MARK: - Fake exclusivo del Target de Tests (Cero Fakes en Release)
+
+@Inject
+final class FakerGitHubRepository: GitHubRepositoryProtocol, Sendable {
+    let environmentTitle: String = "SANDBOX · Faker Offline"
+    let isFakerEnvironment: Bool = true
+
+    func fetchProfile(username: String) async throws -> GitHubUserProfile {
+        .fsaldivarDefault
+    }
+
+    func fetchRepositories(username: String) async throws -> [GitHubRepoItem] {
+        GitHubRepoItem.curatedRepositories
+    }
+}
+
+@Module(includes: [LiveGitHubModule.self])
+enum FakerGitHubModule {
+    @Singleton
+    static func gitHubRepository() -> any GitHubRepositoryProtocol {
+        FakerGitHubRepository()
+    }
+}
+
+// MARK: - Pruebas Unitarias de la App
 
 @Suite("1. Pruebas de la App (UseCases y ViewModel)")
 struct AppUnitTests {

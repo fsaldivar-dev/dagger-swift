@@ -367,6 +367,47 @@ public final class GraphExpectation {
         return self
     }
 
+    /// Verifica que el grafo actual provea todos los contratos (`@Singleton`, `@Scoped`, `@BusinessRule`, `@Precondition`)
+    /// que provee `referenceModule` (ideal para validar que `ModuleV2` o un `FakeModule` no haya perdido dependencias respecto a `ModuleV1`).
+    @discardableResult
+    public func matchesContract(
+        of referenceModule: any GraphModule.Type,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) -> Self {
+        let refName = Self.shortName(String(reflecting: referenceModule))
+        let refNodes = ScopeContainer.root(modules: [referenceModule]).snapshot().nodes
+        let currentNodes = Self.collectAllNodesUpwards(from: container)
+
+        for refNode in refNodes {
+            let shortType = Self.shortName(refNode.type)
+            guard let matched = currentNodes.first(where: { $0.type == refNode.type }) else {
+                let msg = "❌ Contrato incompleto respecto a '\(refName)': falta proveer '\(shortType)' (\(refNode.kind))."
+                stepsLog.append(msg)
+                Issue.record(Comment(rawValue: msg), sourceLocation: sourceLocation)
+                continue
+            }
+            if matched.kind != refNode.kind {
+                let msg = "❌ Contrato distinto respecto a '\(refName)' en '\(shortType)': se esperaba '\(refNode.kind)' pero se registró como '\(matched.kind)'."
+                stepsLog.append(msg)
+                Issue.record(Comment(rawValue: msg), sourceLocation: sourceLocation)
+            }
+        }
+        stepsLog.append("✅ .matchesContract(of: \(refName).self)")
+        return self
+    }
+
+    private static func collectAllNodesUpwards(from leaf: ScopeContainer) -> [GraphNodeSnapshot] {
+        var result: [GraphNodeSnapshot] = []
+        var cursor: ScopeContainer? = leaf
+        while let box = cursor {
+            for node in box.snapshot().nodes where !result.contains(where: { $0.type == node.type }) {
+                result.append(node)
+            }
+            cursor = box.parent
+        }
+        return result
+    }
+
     fileprivate func recordStep(_ text: String) {
         stepsLog.append(text)
     }
