@@ -116,23 +116,35 @@ public struct DependencyExpectation<T> {
         expectation.resolved(T.self, sourceLocation: sourceLocation, where: predicate)
     }
 
-    /// Verifica que la dependencia NO se resuelva porque una `@Precondition` devolvió `nil`.
+    /// Verifica que la dependencia NO se resuelva porque una `@Precondition` de su árbol devolvió `nil`.
+    /// Si la dependencia ni siquiera tiene `@Precondition` en su sub-grafo, falla indicando que no aplica.
     @discardableResult
     public func preconditionFailure(
         sourceLocation: SourceLocation = #_sourceLocation
     ) -> GraphExpectation {
         let targetName = GraphExpectation.shortName(String(reflecting: T.self))
+        let preconditions = expectation.container.preconditionsInSubgraph(for: T.self)
+            .map(GraphExpectation.shortName)
+
+        guard !preconditions.isEmpty else {
+            Issue.record(
+                Comment(rawValue: "❌ '\(targetName)' NO tiene ninguna @Precondition en su árbol de dependencias, por lo que no puede evaluarse con preconditionFailure()."),
+                sourceLocation: sourceLocation
+            )
+            return expectation
+        }
+
         do {
             _ = try expectation.container.resolve(T.self)
             Issue.record(
-                Comment(rawValue: "❌ Se esperaba preconditionFailure() en '\(targetName)', pero se resolvió exitosamente."),
+                Comment(rawValue: "❌ Se esperaba preconditionFailure() en '\(targetName)' (protegido por \(preconditions)), pero se resolvió exitosamente."),
                 sourceLocation: sourceLocation
             )
         } catch let GraphError.unmetPrecondition(failedType, reason) {
             expectation.recordStep("🔒 .dependency(\(targetName).self).preconditionFailure() -> Bloqueado por \(GraphExpectation.shortName(failedType)) (\(reason))")
         } catch {
             Issue.record(
-                Comment(rawValue: "❌ Se esperaba preconditionFailure() en '\(targetName)', pero falló por otro error: \(error)"),
+                Comment(rawValue: "❌ '\(targetName)' (protegido por \(preconditions)) falló por un error distinto a @Precondition: \(error)"),
                 sourceLocation: sourceLocation
             )
         }
@@ -145,7 +157,39 @@ public struct DependencyExpectation<T> {
         _ precondition: P.Type,
         sourceLocation: SourceLocation = #_sourceLocation
     ) -> GraphExpectation {
-        expectation.blocked(T.self, by: precondition, sourceLocation: sourceLocation)
+        let targetName = GraphExpectation.shortName(String(reflecting: T.self))
+        let precondName = GraphExpectation.shortName(String(reflecting: P.self))
+        let preconditions = expectation.container.preconditionsInSubgraph(for: T.self)
+            .map(GraphExpectation.shortName)
+
+        guard preconditions.contains(precondName) else {
+            Issue.record(
+                Comment(rawValue: "❌ '\(targetName)' no depende de la @Precondition '\(precondName)'. Precondiciones en su árbol: \(preconditions)"),
+                sourceLocation: sourceLocation
+            )
+            return expectation
+        }
+
+        return expectation.blocked(T.self, by: precondition, sourceLocation: sourceLocation)
+    }
+
+    /// Verifica estáticamente (sin instanciar nada) que esta dependencia NO requiere ninguna `@Precondition` en su árbol.
+    @discardableResult
+    public func hasNoPreconditions(
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) -> GraphExpectation {
+        let targetName = GraphExpectation.shortName(String(reflecting: T.self))
+        let preconditions = expectation.container.preconditionsInSubgraph(for: T.self)
+            .map(GraphExpectation.shortName)
+        if !preconditions.isEmpty {
+            Issue.record(
+                Comment(rawValue: "❌ Se esperaba que '\(targetName)' fuera libre de precondiciones, pero depende de: \(preconditions)"),
+                sourceLocation: sourceLocation
+            )
+        } else {
+            expectation.recordStep("✅ .dependency(\(targetName).self).hasNoPreconditions()")
+        }
+        return expectation
     }
 
     /// Verifica que la dependencia falle porque falta registrar un módulo o dependencia en el grafo.

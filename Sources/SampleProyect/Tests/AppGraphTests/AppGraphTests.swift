@@ -39,6 +39,7 @@ struct AppGraphTests {
     func testPrecondicionSinNavegarScopes() {
         expectGraph(ShowcaseCoreModule.self, FakerGitHubModule.self, RepoDetailModule.self)
             .whenResolved(GitHubRepoItem.self).returns(.flagshipDaggerRepo)
+            .dependency(GetProfileUseCase.self).hasNoPreconditions()
             .dependency(RepoDetailInspector.self).preconditionFailure()
             .when { (auth: any AuthRepositoryProtocol) in
                 auth.loginAsSaldivar()
