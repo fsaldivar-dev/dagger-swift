@@ -151,7 +151,37 @@ public macro Module<S: GraphScope>(_ version: Double, scope: S.Type, includes: [
     type: "ModuleMacro"
 )
 
-/// Dagger 2: Genera automáticamente el `init` limpio (para Unit Tests sin grafo) y el cableado de resolución en el grafo.
+/// Paleta estándar de versiones de `@Module` integrada en `DaggerSwift` (estilo `CodingKeys`).
+public enum ModulePalette: String, CaseIterable, Identifiable, Sendable, CustomStringConvertible {
+    case v0_1 = "0.1"
+    case v1_0 = "1.0"
+    case v2_0 = "2.0"
+
+    public var id: String { rawValue }
+
+    public var buttonLabel: String {
+        "Module(\(rawValue))"
+    }
+
+    public var description: String {
+        buttonLabel
+    }
+}
+
+/// Sintetiza automáticamente en un `GraphScope` el enumerador `Palette` (`ModulePalette`)
+/// y el selector estático `module(for:)` en tiempo de compilación (estilo `CodingKeys`).
+@attached(member, names: arbitrary)
+public macro Scope<Contract>(
+    of contract: Contract.Type,
+    v0_1: Any.Type,
+    v1_0: Any.Type,
+    v2_0: Any.Type
+) = #externalMacro(
+    module: "DaggerSwiftMacros",
+    type: "ModulePaletteMacro"
+)
+
+/// Dagger 2: Genera automáticamente el `init` limpio (para Unit Tests y resolución explícita en compile-time) y el cableado del grafo.
 @attached(member, names: arbitrary)
 @attached(extension, conformances: Injectable, names: arbitrary)
 public macro Inject() = #externalMacro(

@@ -4,9 +4,6 @@
 //
 
 import Foundation
-import DaggerSwift
-
-public enum FintechScope: GraphScope {}
 
 public struct FintechAccountSummary: Sendable, Equatable {
     public let holderName: String

@@ -23,10 +23,18 @@ final class FakerGitHubRepository: GitHubRepositoryProtocol, Sendable {
 }
 
 @Module(includes: [LiveGitHubModule.self])
-enum FakerGitHubModule {
+enum FakerGitHubModule: GitHubServiceModuleContract {
     @Singleton
     static func gitHubRepository() -> any GitHubRepositoryProtocol {
         FakerGitHubRepository()
+    }
+
+    static func authRepository() -> any AuthRepositoryProtocol {
+        LiveGitHubModule.authRepository()
+    }
+
+    static func featureFlags() -> any FeatureFlagRepositoryProtocol {
+        LiveGitHubModule.featureFlags()
     }
 }
 
@@ -56,8 +64,14 @@ struct AppUnitTests {
 
     @Test("FeedViewModel filtra repositorios por nombre")
     @MainActor
-    func testBuscarRepositorioEnFeed() async throws {
-        let viewModel: FeedViewModel = try ShowcaseCoreModule.resolve(including: [FakerGitHubModule.self])
+    func testBuscarRepositorioEnFeed() async {
+        let fakeRepo = FakerGitHubModule.gitHubRepository()
+        let viewModel = FeedViewModel(
+            getProfileUseCase: GetProfileUseCase(gitHubRepository: fakeRepo),
+            getRepositoriesUseCase: GetRepositoriesUseCase(gitHubRepository: fakeRepo),
+            authRepository: FakerGitHubModule.authRepository(),
+            flagRepository: FakerGitHubModule.featureFlags()
+        )
 
         await viewModel.loadInitialData()
         viewModel.searchText = "AutoPilot"

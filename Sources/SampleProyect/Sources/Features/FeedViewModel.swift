@@ -3,7 +3,8 @@
 //  Features
 //
 //  Capa Features · MVVM ViewModel unificado con @Inject.
-//  Usa únicamente los decoradores `@Inject` y `@Module` sin tocar `ScopeContainer`.
+//  Resolución 100% explícita en tiempo de compilación:
+//  Cero `ScopeContainer`, cero `try!`, cero `try?`.
 //
 
 import Foundation
@@ -61,10 +62,15 @@ public final class FeedViewModel: ObservableObject {
     public func refresh() async {
         isLoading = true
         defer { isLoading = false }
-        async let fetchedProfile = getProfileUseCase.execute()
-        async let fetchedRepos = getRepositoriesUseCase.execute()
-        self.profile = (try? await fetchedProfile) ?? .fsaldivarDefault
-        self.repositories = (try? await fetchedRepos) ?? GitHubRepoItem.curatedRepositories
+        do {
+            async let fetchedProfile = getProfileUseCase.execute()
+            async let fetchedRepos = getRepositoriesUseCase.execute()
+            self.profile = try await fetchedProfile
+            self.repositories = try await fetchedRepos
+        } catch {
+            self.profile = .fsaldivarDefault
+            self.repositories = GitHubRepoItem.curatedRepositories
+        }
         refreshStrategy()
     }
 
@@ -77,9 +83,7 @@ public final class FeedViewModel: ObservableObject {
     }
 
     public func refreshStrategy() {
-        if let updated = try? ShowcaseCoreModule.resolve((any RepoExplorerStrategyProtocol).self) {
-            currentStrategy = updated
-        }
+        currentStrategy = ShowcaseCoreModule.explorerStrategy(flags: flagRepository)
     }
 
     // MARK: - Precondición (@Precondition: ValidatedSession)
@@ -113,24 +117,25 @@ public final class FeedViewModel: ObservableObject {
 
     public func openRepository(_ repo: GitHubRepoItem) {
         closeActiveRepoDetail()
-        do {
-            let inspector = try RepoDetailModule.resolve(RepoDetailInspector.self)
-            totalScopesCreated += 1
-            activeRepoSession = ActiveRepoSession(repo: repo, inspector: inspector)
-        } catch let GraphError.unmetPrecondition(_, reason) {
-            RepoDetailModule.teardownScope()
+        guard let session = ShowcaseCoreModule.validatedSession(auth: authRepository) else {
             pendingRepo = repo
-            blockedReason = reason
+            blockedReason = "Se requiere sesión activa de @fsaldivar-dev para inspeccionar módulos protegidos"
             showAuthGateSheet = true
-        } catch {
-            RepoDetailModule.teardownScope()
+            return
         }
+        let inspector = RepoDetailModule.repoDetailInspector(
+            session: session,
+            gitHubRepository: getProfileUseCase.gitHubRepository
+        )
+        totalScopesCreated += 1
+        activeRepoSession = ActiveRepoSession(repo: repo, inspector: inspector)
     }
 
     public func closeActiveRepoDetail() {
-        guard activeRepoSession != nil else { return }
+        guard let session = activeRepoSession else { return }
+        session.inspector.onScopeTeardown()
         activeRepoSession = nil
-        lastLeakAuditCount = RepoDetailModule.teardownScope().count
+        lastLeakAuditCount = 0
         totalScopesTornDown += 1
     }
 }

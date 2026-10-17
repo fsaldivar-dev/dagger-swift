@@ -32,19 +32,38 @@ public struct ShowcaseRootView: View {
     @StateObject private var githubFeedVM: FeedViewModel
 
     public init(
-        environment: any GraphModule.Type = LiveGitHubModule.self,
+        environment: any GitHubServiceModuleContract.Type = LiveGitHubModule.self,
         initialTab: ShowcaseDemoTab? = nil
     ) {
         self._activeDemo = State(initialValue: initialTab)
 
-        // 1. Demo 1: Multi-Country Login + News (MX, US, BR, FR)
-        _countryNewsVM = StateObject(wrappedValue: try! MexicoNewsModule.resolve())
+        // 1. Demo 1: Multi-Country Login + News (Compilación explícita, cero try!)
+        _countryNewsVM = StateObject(
+            wrappedValue: CountryNewsPortalViewModel(
+                authRepository: CountryAuthServiceModule.countryAuthRepository(),
+                initialLocale: MexicoNewsModule.localeProvider()
+            )
+        )
 
-        // 2. Demo 2: Fintech Mockup (Paleta Module(0.1), Module(1.0), Module(2.0) + A/B Flags)
-        _fintechVM = StateObject(wrappedValue: try! FintechModuleV2.resolve())
+        // 2. Demo 2: Fintech Mockup (Paleta Module(0.1 / 1.0 / 2.0) + A/B Flags, cero try!)
+        let fintechFlags = FintechSharedFlagsModule.abFlagsRepository()
+        _fintechVM = StateObject(
+            wrappedValue: FintechMockupViewModel(
+                initialDashboard: FintechMockupViewModel.makeDashboard(for: .v2_0, flags: fintechFlags),
+                flagsRepository: fintechFlags
+            )
+        )
 
-        // 3. Demo 3: GitHub Social Developer Profile (@fsaldivar-dev)
-        _githubFeedVM = StateObject(wrappedValue: try! ShowcaseCoreModule.resolve(including: [environment]))
+        // 3. Demo 3: GitHub Social Developer Profile (Compilación explícita, cero try!)
+        let gitHubRepo = environment.gitHubRepository()
+        _githubFeedVM = StateObject(
+            wrappedValue: FeedViewModel(
+                getProfileUseCase: GetProfileUseCase(gitHubRepository: gitHubRepo),
+                getRepositoriesUseCase: GetRepositoriesUseCase(gitHubRepository: gitHubRepo),
+                authRepository: environment.authRepository(),
+                flagRepository: environment.featureFlags()
+            )
+        )
     }
 
     public var body: some View {
