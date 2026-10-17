@@ -2,16 +2,22 @@
 //  DaggerSwiftTesting.swift
 //  DaggerSwiftTesting
 //
-//  DSL Declarativo (Sugar) para validar la composición de grafos, Fakes y precondiciones con `import Testing`:
+//  DSL Declarativo para validar la composición de grafos y precondiciones con `import Testing`:
 //
-//  ShowcaseCoreModule
-//      .whenResolved((any GitHubRepositoryProtocol).self).returns(FakerGitHubRepository.self)
-//      .resolved(GetProfileUseCase.self)
-//      .resolved(GetRepositoriesUseCase.self)
+//  1. Validar que un flujo se resuelva:
+//     expectGraph(ShowcaseCoreModule.self, FakerGitHubModule.self)
+//         .resolved(GetProfileUseCase.self)
+//         .resolved(GetRepositoriesUseCase.self)
+//         .resolved(FeedViewModel.self)
 //
-//  expectGraph(ShowcaseCoreModule.self, FakerGitHubModule.self)
-//      .resolved(GetProfileUseCase.self)
-//      .resolved(FeedViewModel.self)
+//  2. Validar precondiciones sin navegar sub-scopes manualmente:
+//     expectGraph(ShowcaseCoreModule.self, FakerGitHubModule.self, RepoDetailModule.self)
+//         .whenResolved(GitHubRepoItem.self).returns(.flagshipDaggerRepo)
+//         .dependency(RepoDetailInspector.self).preconditionFailure()
+//         .when { (auth: any AuthRepositoryProtocol) in
+//             auth.loginAsSaldivar()
+//         }
+//         .dependency(RepoDetailInspector.self).resolved()
 //
 
 import Foundation
@@ -29,14 +35,14 @@ public extension Tag {
 // MARK: - 2. Extensión directa en cualquier `@Module`: `Module.whenResolved(Protocol.self).returns(Fake.self)`
 
 public extension GraphModule {
-    /// Inicia un grafo de prueba para este módulo inyectando un Fake cuando se solicite `ProtocolType`.
+    /// Inicia un grafo de prueba para este módulo inyectando un Fake o valor cuando se solicite `ProtocolType`.
     static func whenResolved<ProtocolType>(_ protocolType: ProtocolType.Type) -> WhenResolvedBuilder<ProtocolType> {
         let expectation = expectGraph(Self.self)
         return expectation.whenResolved(protocolType)
     }
 }
 
-/// Builder intermedio para `whenResolved(Protocol.self).returns(Fake.self)`.
+/// Builder para `.whenResolved(Protocol.self).returns(Fake.self)`.
 public struct WhenResolvedBuilder<ProtocolType> {
     public let expectation: GraphExpectation
 
@@ -50,7 +56,7 @@ public struct WhenResolvedBuilder<ProtocolType> {
         container.provideSingleton(ProtocolType.self) {
             guard let instance = try container.resolve(Fake.self) as? ProtocolType else {
                 Issue.record(
-                    Comment(rawValue: "❌ '\(Fake.self)' no conforma el protocolo '\(ProtocolType.self)'"),
+                    Comment(rawValue: "❌ '\(Fake.self)' no implementa '\(ProtocolType.self)'"),
                     sourceLocation: sourceLocation
                 )
                 throw GraphError.unregisteredDependency(
@@ -63,7 +69,6 @@ public struct WhenResolvedBuilder<ProtocolType> {
         return expectation
     }
 
-    /// Alias con backticks por si se escribe `.return(Fake.self)`.
     @discardableResult
     public func `return`<Fake: Injectable>(
         _ fakeType: Fake.Type,
@@ -72,7 +77,7 @@ public struct WhenResolvedBuilder<ProtocolType> {
         returns(fakeType, sourceLocation: sourceLocation)
     }
 
-    /// Registra una instancia directa (ej. `FakerGitHubRepository()`) como respuesta para `ProtocolType`.
+    /// Registra una instancia o valor directo (ej. `.flagshipDaggerRepo` o `FakerGitHubRepository()`) para `ProtocolType`.
     @discardableResult
     public func returns(_ instance: @autoclosure @escaping () -> ProtocolType) -> GraphExpectation {
         expectation.container.provideSingleton(ProtocolType.self) {
@@ -81,35 +86,98 @@ public struct WhenResolvedBuilder<ProtocolType> {
         return expectation
     }
 
-    /// Alias con backticks por si se escribe `.return(FakerGitHubRepository())`.
     @discardableResult
     public func `return`(_ instance: @autoclosure @escaping () -> ProtocolType) -> GraphExpectation {
         returns(instance())
     }
 }
 
-// MARK: - 3. Puntos de Entrada del DSL Declarativo
+// MARK: - 3. Selector `.dependency(Type.self)` con Expectativas Explícitas
 
-/// Inicia la validación declarativa de un grafo compuesto por uno o más `@Module`.
-@discardableResult
-public func expectGraph(_ modules: any GraphModule.Type...) -> GraphExpectation {
-    let container = ScopeContainer.root(modules: modules)
-    return GraphExpectation(container: container)
+/// Permite expresar qué se espera de una dependencia específica:
+/// `.dependency(RepoDetailInspector.self).preconditionFailure()`
+/// `.dependency(RepoDetailInspector.self).resolved()`
+/// `.dependency(GetProfileUseCase.self).unresolvedFailure()`
+public struct DependencyExpectation<T> {
+    public let expectation: GraphExpectation
+
+    /// Verifica que la dependencia se resuelva exitosamente en el grafo.
+    @discardableResult
+    public func resolved(sourceLocation: SourceLocation = #_sourceLocation) -> GraphExpectation {
+        expectation.resolved(T.self, sourceLocation: sourceLocation)
+    }
+
+    /// Verifica que la dependencia se resuelva y cumpla una condición (útil para `@BusinessRule`).
+    @discardableResult
+    public func resolved(
+        sourceLocation: SourceLocation = #_sourceLocation,
+        where predicate: (T) -> Bool
+    ) -> GraphExpectation {
+        expectation.resolved(T.self, sourceLocation: sourceLocation, where: predicate)
+    }
+
+    /// Verifica que la dependencia NO se resuelva porque una `@Precondition` devolvió `nil`.
+    @discardableResult
+    public func preconditionFailure(
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) -> GraphExpectation {
+        let targetName = GraphExpectation.shortName(String(reflecting: T.self))
+        do {
+            _ = try expectation.container.resolve(T.self)
+            Issue.record(
+                Comment(rawValue: "❌ Se esperaba preconditionFailure() en '\(targetName)', pero se resolvió exitosamente."),
+                sourceLocation: sourceLocation
+            )
+        } catch let GraphError.unmetPrecondition(failedType, reason) {
+            expectation.recordStep("🔒 .dependency(\(targetName).self).preconditionFailure() -> Bloqueado por \(GraphExpectation.shortName(failedType)) (\(reason))")
+        } catch {
+            Issue.record(
+                Comment(rawValue: "❌ Se esperaba preconditionFailure() en '\(targetName)', pero falló por otro error: \(error)"),
+                sourceLocation: sourceLocation
+            )
+        }
+        return expectation
+    }
+
+    /// Verifica que la dependencia NO se resuelva específicamente por la `@Precondition` indicada.
+    @discardableResult
+    public func preconditionFailure<P: Precondition>(
+        _ precondition: P.Type,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) -> GraphExpectation {
+        expectation.blocked(T.self, by: precondition, sourceLocation: sourceLocation)
+    }
+
+    /// Verifica que la dependencia falle porque falta registrar un módulo o dependencia en el grafo.
+    @discardableResult
+    public func unresolvedFailure(
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) -> GraphExpectation {
+        expectation.unresolved(T.self, sourceLocation: sourceLocation)
+    }
 }
 
-/// Inicia la validación de un grafo ejecutando primero una condición (ej. iniciar sesión o activar un Feature Flag).
+// MARK: - 4. Puntos de Entrada `expectGraph` y `expectWhenCondition`
+
+/// Construye el grafo activando automáticamente los Scopes de todos los `@Module` pasados,
+/// sin necesidad de navegar manualmente con `inChildScope`.
+@discardableResult
+public func expectGraph(_ modules: any GraphModule.Type...) -> GraphExpectation {
+    return GraphExpectation(modules: modules)
+}
+
+/// Construye el grafo y ejecuta primero una condición (ej. iniciar sesión o cambiar un Feature Flag).
 @discardableResult
 public func expectWhenCondition<D>(
     _ modules: any GraphModule.Type...,
     sourceLocation: SourceLocation = #_sourceLocation,
     condition: (D) throws -> Void
 ) -> GraphExpectation {
-    let container = ScopeContainer.root(modules: modules)
-    let expectation = GraphExpectation(container: container)
+    let expectation = GraphExpectation(modules: modules)
     return expectation.when(sourceLocation: sourceLocation, condition)
 }
 
-// MARK: - 4. Cadena Fluida `GraphExpectation`
+// MARK: - 5. Cadena Fluida `GraphExpectation`
 
 public final class GraphExpectation {
     public let container: ScopeContainer
@@ -120,12 +188,28 @@ public final class GraphExpectation {
         self.stepsLog = stepsLog
     }
 
-    /// Permite encadenar `.whenResolved(Protocol.self).returns(Fake.self)` dentro de `expectGraph(...)`.
+    public convenience init(modules: [any GraphModule.Type]) {
+        // Registramos los módulos en la raíz y activamos sus Scopes en cadena
+        // para que cualquier @Scoped de los módulos listados funcione sin llamar a inChildScope.
+        let root = ScopeContainer.root(modules: modules)
+        var current = root
+        for module in modules {
+            current = current.makeChildScope(for: module)
+        }
+        self.init(container: current)
+    }
+
+    /// Selecciona una dependencia para validar su comportamiento (`.resolved()`, `.preconditionFailure()`, `.unresolvedFailure()`).
+    public func dependency<T>(_ type: T.Type) -> DependencyExpectation<T> {
+        DependencyExpectation(expectation: self)
+    }
+
+    /// Inyecta un Fake o valor cuando se solicite `ProtocolType`.
     public func whenResolved<ProtocolType>(_ protocolType: ProtocolType.Type) -> WhenResolvedBuilder<ProtocolType> {
         WhenResolvedBuilder(expectation: self)
     }
 
-    /// Verifica que el tipo `T` se pueda resolver exitosamente en el grafo actual.
+    /// Verifica directamente que `T` se resuelva sin errores.
     @discardableResult
     public func resolved<T>(
         _ type: T.Type,
@@ -144,7 +228,7 @@ public final class GraphExpectation {
         return self
     }
 
-    /// Verifica que el tipo `T` además cumpla una validación sobre la instancia resuelta (útil para `@BusinessRule`).
+    /// Verifica que `T` se resuelva y cumpla una condición.
     @discardableResult
     public func resolved<T>(
         _ type: T.Type,
@@ -157,7 +241,7 @@ public final class GraphExpectation {
             if predicate(instance) {
                 stepsLog.append("✅ .resolved(\(name).self) cumplió la condición")
             } else {
-                let msg = "❌ '\(name)' se resolvió pero no cumplió la condición esperada en el bloque 'where'"
+                let msg = "❌ '\(name)' se resolvió pero no cumplió la condición esperada"
                 stepsLog.append(msg)
                 Issue.record(Comment(rawValue: msg), sourceLocation: sourceLocation)
             }
@@ -170,7 +254,7 @@ public final class GraphExpectation {
         return self
     }
 
-    /// Verifica que `T` esté bloqueado por una `@Precondition` (ej. `ValidatedSession.self`).
+    /// Verifica que `T` esté bloqueado por la `@Precondition` indicada.
     @discardableResult
     public func blocked<T, P: Precondition>(
         _ type: T.Type,
@@ -187,7 +271,7 @@ public final class GraphExpectation {
             Issue.record(Comment(rawValue: msg), sourceLocation: sourceLocation)
         } catch let GraphError.unmetPrecondition(failedType, reason) {
             if failedType.contains(precondName) {
-                stepsLog.append("🔒 .blocked(\(targetName).self, by: \(precondName).self) -> Bloqueado correctamente (\(reason))")
+                stepsLog.append("🔒 .blocked(\(targetName).self, by: \(precondName).self) (\(reason))")
             } else {
                 let msg = "❌ '\(targetName)' se bloqueó por '\(failedType)', pero se esperaba '\(precondName)'."
                 stepsLog.append(msg)
@@ -201,7 +285,7 @@ public final class GraphExpectation {
         return self
     }
 
-    /// Verifica que `T` NO se pueda resolver porque falta registrar una dependencia o módulo en el grafo.
+    /// Verifica que `T` falle por falta de registro en el grafo.
     @discardableResult
     public func unresolved<T>(
         _ type: T.Type,
@@ -215,13 +299,12 @@ public final class GraphExpectation {
             Issue.record(Comment(rawValue: msg), sourceLocation: sourceLocation)
         } catch {
             let trace = container.lastFailureTrace.map(Self.shortName).joined(separator: " -> ❌ ")
-            stepsLog.append("🛑 .unresolved(\(name).self) -> Falló como se esperaba: [\(trace)]")
+            stepsLog.append("🛑 .unresolved(\(name).self) -> [\(trace)]")
         }
         return self
     }
 
-    /// Ejecuta una acción sobre una dependencia del grafo (ej. iniciar sesión o cambiar un Feature Flag)
-    /// para validar cómo cambia la resolución en los siguientes pasos de la cadena.
+    /// Ejecuta un cambio de estado sobre una dependencia del grafo (ej. hacer login o cambiar un flag).
     @discardableResult
     public func when<D>(
         sourceLocation: SourceLocation = #_sourceLocation,
@@ -240,47 +323,11 @@ public final class GraphExpectation {
         return self
     }
 
-    /// Abre un sub-scope hijo (ej. `RepoDetailModule.self`) opcionalmente inyectando un valor runtime (`bindInstance`).
-    @discardableResult
-    public func inChildScope<S: GraphScope>(
-        _ scope: S.Type,
-        modules: [any GraphModule.Type] = []
-    ) -> GraphExpectation {
-        let child = container.makeChildScope(for: scope, modules: modules)
-        stepsLog.append("📂 .inChildScope(\(Self.shortName(S.scopeID.name)).self)")
-        return GraphExpectation(container: child, stepsLog: stepsLog)
+    fileprivate func recordStep(_ text: String) {
+        stepsLog.append(text)
     }
 
-    /// Abre un sub-scope hijo e inyecta un valor runtime (`bindInstance`).
-    @discardableResult
-    public func inChildScope<S: GraphScope, V>(
-        _ scope: S.Type,
-        binding value: V,
-        modules: [any GraphModule.Type] = []
-    ) -> GraphExpectation {
-        let child = container.makeChildScope(for: scope, modules: modules)
-        child.bindInstance(value)
-        stepsLog.append("📂 .inChildScope(\(Self.shortName(S.scopeID.name)).self, binding: \(Self.shortName(String(reflecting: V.self))))")
-        return GraphExpectation(container: child, stepsLog: stepsLog)
-    }
-
-    /// Verifica que al ejecutar `teardown()` en este scope, todas las instancias se liberen con 0 fugas de memoria.
-    @discardableResult
-    public func tornDownCleanly(
-        sourceLocation: SourceLocation = #_sourceLocation
-    ) -> Self {
-        let leaks = container.teardown()
-        if leaks.isEmpty {
-            stepsLog.append("🧹 .tornDownCleanly() -> 0 fugas en RAM")
-        } else {
-            let msg = "❌ Fuga de memoria detectada en teardown(): \(leaks.joined(separator: ", "))"
-            stepsLog.append(msg)
-            Issue.record(Comment(rawValue: msg), sourceLocation: sourceLocation)
-        }
-        return self
-    }
-
-    private static func shortName(_ raw: String) -> String {
+    fileprivate static func shortName(_ raw: String) -> String {
         raw.replacingOccurrences(of: "any ", with: "")
             .split(separator: ".")
             .last
