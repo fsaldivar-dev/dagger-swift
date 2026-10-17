@@ -107,6 +107,10 @@ public final class ScopeContainer: @unchecked Sendable {
     /// Identificador del Scope que representa esta caja (ej. `GlobalScope`, `ValidatedSession`, `LoansModule`).
     public let scopeID: ScopeID
 
+    /// Scopes adicionales compatibles con esta caja (ej. evolución `ModuleV1 -> ModuleV2` vía `includes:`
+    /// o variantes hermanas `Mexico / Argentina / Colombia` vía `@Module(scope:)`).
+    private var compatibleScopeIDs: Set<ScopeID> = []
+
     /// Referencia fuerte al contenedor padre (más longevo). `nil` únicamente en `GlobalScope`.
     public let parent: ScopeContainer?
 
@@ -139,6 +143,14 @@ public final class ScopeContainer: @unchecked Sendable {
         self.scopeID = scopeID
         self.parent = parent
         self.lock = parent?.lock ?? NSRecursiveLock()
+    }
+
+    /// Declara que esta caja de Scope también satisface `scope` (para evolución `V1 -> V2` o variantes por país).
+    public func addCompatibleScope<S: GraphScope>(_ scope: S.Type) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard self.scopeID != GlobalScope.scopeID else { return }
+        compatibleScopeIDs.insert(S.scopeID)
     }
 
     /// Crea un contenedor raíz (`GlobalScope`) opcionalmente cargando una lista de módulos base.
@@ -552,7 +564,7 @@ public final class ScopeContainer: @unchecked Sendable {
     }
 
     private func findBoxUpwards(matching targetScopeID: ScopeID) -> ScopeContainer? {
-        if self.scopeID == targetScopeID {
+        if self.scopeID == targetScopeID || self.compatibleScopeIDs.contains(targetScopeID) {
             return self
         }
         return parent?.findBoxUpwards(matching: targetScopeID)
