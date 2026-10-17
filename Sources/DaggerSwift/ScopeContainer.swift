@@ -128,6 +128,9 @@ public final class ScopeContainer: @unchecked Sendable {
     /// Identificador del Scope que representa esta caja (ej. `GlobalScope`, `ValidatedSession`, `LoansModule`).
     public let scopeID: ScopeID
 
+    /// Indica si se auditan fugas de memoria con cajas débiles (por defecto `true`).
+    public let auditLeaks: Bool
+
     /// Scopes adicionales compatibles con esta caja (ej. evolución `ModuleV1 -> ModuleV2` vía `includes:`
     /// o variantes hermanas `Mexico / Argentina / Colombia` vía `@Module(scope:)`).
     private var compatibleScopeIDs: Set<ScopeID> = []
@@ -144,6 +147,12 @@ public final class ScopeContainer: @unchecked Sendable {
     /// Recetas registradas en este nivel del grafo (Costo cero al arrancar: son closures, no instancias).
     private var recipes: [ObjectIdentifier: GraphRecipe] = [:]
 
+    /// Caché de recetas resueltas (evita recorrer la jerarquía de padres en cada llamada consecutiva).
+    private var cachedRecipes: [ObjectIdentifier: (ScopeContainer, GraphRecipe)] = [:]
+
+    /// Caché de cajas de Scope encontradas (evita recorrer el árbol de scopes repetidamente).
+    private var cachedScopeBoxes: [ScopeID: ScopeContainer] = [:]
+
     /// Instancias vivas cuyo ciclo de vida pertenece exactamente a ESTE `scopeID`.
     private var instances: [ObjectIdentifier: Any] = [:]
 
@@ -152,7 +161,6 @@ public final class ScopeContainer: @unchecked Sendable {
 
     /// Pila compartida en la raíz para detectar ciclos de dependencias (`A -> B -> A`).
     private var resolutionStack: [ObjectIdentifier] = []
-    private var resolutionNames: [String] = []
 
     /// Último camino de resolución donde ocurrió un error (para diagnóstico en `DaggerSwiftTesting`).
     private var lastFailurePath: [String] = []
@@ -160,9 +168,14 @@ public final class ScopeContainer: @unchecked Sendable {
     /// Indica si este contenedor ya fue cerrado mediante `teardown()`.
     public private(set) var isTornDown: Bool = false
 
-    public init(scopeID: ScopeID = GlobalScope.scopeID, parent: ScopeContainer? = nil) {
+    public init(
+        scopeID: ScopeID = GlobalScope.scopeID,
+        parent: ScopeContainer? = nil,
+        auditLeaks: Bool = true
+    ) {
         self.scopeID = scopeID
         self.parent = parent
+        self.auditLeaks = auditLeaks
         self.lock = parent?.lock ?? NSRecursiveLock()
     }
 
@@ -172,11 +185,15 @@ public final class ScopeContainer: @unchecked Sendable {
         defer { lock.unlock() }
         guard self.scopeID != GlobalScope.scopeID else { return }
         compatibleScopeIDs.insert(S.scopeID)
+        cachedScopeBoxes.removeAll(keepingCapacity: true)
     }
 
     /// Crea un contenedor raíz (`GlobalScope`) opcionalmente cargando una lista de módulos base.
-    public static func root(modules: [any GraphModule.Type] = []) -> ScopeContainer {
-        let container = ScopeContainer(scopeID: GlobalScope.scopeID, parent: nil)
+    public static func root(
+        modules: [any GraphModule.Type] = [],
+        auditLeaks: Bool = true
+    ) -> ScopeContainer {
+        let container = ScopeContainer(scopeID: GlobalScope.scopeID, parent: nil, auditLeaks: auditLeaks)
         for module in modules {
             module.register(in: container)
         }
@@ -226,7 +243,7 @@ public final class ScopeContainer: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
 
-        let child = ScopeContainer(scopeID: S.scopeID, parent: self)
+        let child = ScopeContainer(scopeID: S.scopeID, parent: self, auditLeaks: self.auditLeaks)
         if let graphModule = scope as? any GraphModule.Type {
             graphModule.register(in: child)
         }
@@ -393,12 +410,12 @@ public final class ScopeContainer: @unchecked Sendable {
         let rootBox = self.rootContainer
 
         if rootBox.resolutionStack.isEmpty {
-            rootBox.lastFailurePath.removeAll()
+            rootBox.lastFailurePath.removeAll(keepingCapacity: true)
         }
 
         // 1. Detección de ciclos en el grafo
         if rootBox.resolutionStack.contains(key) {
-            let cycleChain = rootBox.resolutionNames + [typeName]
+            let cycleChain = rootBox.buildStackNames() + [typeName]
             rootBox.lastFailurePath = cycleChain
             throw GraphError.circularDependency(chain: cycleChain)
         }
@@ -409,14 +426,14 @@ public final class ScopeContainer: @unchecked Sendable {
             injectable.register(in: self)
         }
         guard let (_, recipe) = findRecipeUpwards(for: key) else {
-            rootBox.lastFailurePath = rootBox.resolutionNames + [typeName]
+            rootBox.lastFailurePath = rootBox.buildStackNames() + [typeName]
             throw GraphError.unregisteredDependency(type: typeName, searchedFromScope: self.scopeID)
         }
 
         // 3. Ejecutar según el ciclo de vida del nodo
         switch recipe.lifetime {
         case .transient, .businessRule, .precondition:
-            return try executeWithCycleTracking(key: key, name: typeName, root: rootBox) {
+            return try executeWithCycleTracking(key: key, root: rootBox) {
                 guard let instance = try recipe.build(self) as? T else {
                     throw GraphError.unregisteredDependency(type: typeName, searchedFromScope: self.scopeID)
                 }
@@ -426,7 +443,7 @@ public final class ScopeContainer: @unchecked Sendable {
         case .scoped(let targetScopeID):
             // Subir desde el contenedor actual para encontrar la caja dueña del Scope
             guard let ownerBox = findBoxUpwards(matching: targetScopeID), !ownerBox.isTornDown else {
-                rootBox.lastFailurePath = rootBox.resolutionNames + [typeName]
+                rootBox.lastFailurePath = rootBox.buildStackNames() + [typeName]
                 throw GraphError.scopeNotActive(
                     requestedScope: targetScopeID,
                     currentScope: self.scopeID,
@@ -441,7 +458,7 @@ public final class ScopeContainer: @unchecked Sendable {
 
             // Construimos usando 'ownerBox' como resolver para garantizar la Regla de Oro:
             // un Scope padre (ej. Global) NO puede depender de cosas registradas solo en un Scope hijo (ej. Loans).
-            return try executeWithCycleTracking(key: key, name: typeName, root: rootBox) {
+            return try executeWithCycleTracking(key: key, root: rootBox) {
                 guard let newInstance = try recipe.build(ownerBox) as? T else {
                     throw GraphError.unregisteredDependency(type: typeName, searchedFromScope: ownerBox.scopeID)
                 }
@@ -593,8 +610,10 @@ public final class ScopeContainer: @unchecked Sendable {
             }
         }
 
-        // 3. Soltar todas las referencias fuertes del diccionario de este Scope
+        // 3. Soltar todas las referencias fuertes del diccionario de este Scope y sus cachés
         instances.removeAll()
+        cachedRecipes.removeAll(keepingCapacity: true)
+        cachedScopeBoxes.removeAll(keepingCapacity: true)
 
         // 4. Auditar inmediatamente vía WeakObjectBox si algún objeto quedó retenido por un retain cycle
         for box in leakTracker where box.object != nil {
@@ -616,17 +635,34 @@ public final class ScopeContainer: @unchecked Sendable {
     }
 
     private func findBoxUpwards(matching targetScopeID: ScopeID) -> ScopeContainer? {
+        if let cached = cachedScopeBoxes[targetScopeID] {
+            return cached
+        }
         if self.scopeID == targetScopeID || self.compatibleScopeIDs.contains(targetScopeID) {
+            cachedScopeBoxes[targetScopeID] = self
             return self
         }
-        return parent?.findBoxUpwards(matching: targetScopeID)
+        if let fromParent = parent?.findBoxUpwards(matching: targetScopeID) {
+            cachedScopeBoxes[targetScopeID] = fromParent
+            return fromParent
+        }
+        return nil
     }
 
     private func findRecipeUpwards(for key: ObjectIdentifier) -> (ScopeContainer, GraphRecipe)? {
-        if let recipe = recipes[key] {
-            return (self, recipe)
+        if let cached = cachedRecipes[key] {
+            return cached
         }
-        return parent?.findRecipeUpwards(for: key)
+        if let recipe = recipes[key] {
+            let found = (self, recipe)
+            cachedRecipes[key] = found
+            return found
+        }
+        if let fromParent = parent?.findRecipeUpwards(for: key) {
+            cachedRecipes[key] = fromParent
+            return fromParent
+        }
+        return nil
     }
 
     private func collectPreconditions(
@@ -716,36 +752,41 @@ public final class ScopeContainer: @unchecked Sendable {
             }
         )
         recipes[key] = recipe
+        cachedRecipes.removeAll(keepingCapacity: true)
         if lifetime == .singleton && self !== rootContainer && rootContainer.recipes[key] == nil {
             rootContainer.recipes[key] = recipe
+            rootContainer.cachedRecipes.removeAll(keepingCapacity: true)
+        }
+    }
+
+    private func buildStackNames() -> [String] {
+        resolutionStack.map { id in
+            findRecipeUpwards(for: id)?.1.typeName ?? "\(id)"
         }
     }
 
     private func executeWithCycleTracking<R>(
         key: ObjectIdentifier,
-        name: String,
         root: ScopeContainer,
         operation: () throws -> R
     ) rethrows -> R {
         root.resolutionStack.append(key)
-        root.resolutionNames.append(name)
         defer {
             root.resolutionStack.removeLast()
-            root.resolutionNames.removeLast()
         }
         do {
             return try operation()
         } catch {
             if root.lastFailurePath.isEmpty {
-                root.lastFailurePath = root.resolutionNames
+                root.lastFailurePath = root.buildStackNames()
             }
             throw error
         }
     }
 
     private func trackForLeaksIfNeeded(_ instance: Any, typeName: String) {
-        let mirror = Mirror(reflecting: instance)
-        if mirror.displayStyle == .class {
+        guard auditLeaks else { return }
+        if type(of: instance) is AnyClass {
             let object = instance as AnyObject
             leakTracker.append(WeakObjectBox(typeName: typeName, object: object))
         }

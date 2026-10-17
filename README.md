@@ -17,6 +17,7 @@ Motor híbrido de **Resolución Explícita en Tiempo de Compilación (`@Module`,
    - [2.3 ¿Cómo funciona `@Inject` y `@Inject(scope:)` por dentro?](#23-cómo-funciona-inject-y-injectscope-por-dentro)
    - [2.4 ¿Qué es una `@Precondition` (Candado de Estado / Sesión por País)?](#24-qué-es-una-precondition-candado-de-estado--sesión-por-país)
    - [2.5 Ciclo de Vida, Memoria y `Plug & UnPlug` (`teardownScope()`)](#25-ciclo-de-vida-memoria-y-plug--unplug-teardownscope)
+   - [2.6 Fronteras de la Librería: Ciclo de Vida de Memoria (DI) vs. Ciclo de Vida de la App (RootComposer)](#26-fronteras-de-la-librería-ciclo-de-vida-de-memoria-di-vs-ciclo-de-vida-de-la-app-rootcomposer)
 3. **[Manual Completo de Pruebas (`DaggerSwiftTesting` + Unit Tests + Linter)](#3--manual-completo-de-pruebas-daggerswifttesting--unit-tests--linter)**
    - [3.1 Nivel 1: Pruebas Unitarias Puras (Sin Grafo)](#31-nivel-1-pruebas-unitarias-puras-sin-grafo)
    - [3.2 Nivel 2: Pruebas del Grafo de Dependencias (`expectGraph` DSL)](#32-nivel-2-pruebas-del-grafo-de-dependencias-expectgraph-dsl)
@@ -408,6 +409,280 @@ public final class RepoDetailInspector: ScopeDisposable, Sendable {
 
 ---
 
+### 2.6 Fronteras de la Librería: Solo una Pieza del Rompecabezas (DI vs. App Lifecycle vs. Coordinator)
+
+Un error muy común en la industria es pretender que una librería de Inyección de Dependencias resuelva **toda la arquitectura de la aplicación**. Para mantener Clean Architecture estricta y alta cohesión, `DaggerSwift v2` asume con honestidad sus fronteras: **solo resuelve una pieza del rompecabezas**.
+
+```text
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                   🧩 EL ROMPECABEZAS DE UNA APLICACIÓN ENTERPRISE                      │
+├────────────────────────────┬───────────────────────────────────────────────────────────┤
+│ 1. DaggerSwift v2 (DI)     │ ✅ Memoria, Grafos, Scopes (@Scoped), Contratos y @Preconditions │
+│ 2. RootComposer (Factory)  │ 🏭 Ensamblaje de Vistas + ViewModels sin Singletons               │
+│ 3. AppCoordinator (Flows)  │ 🧭 Máquina de Estados de Navegación, Modales y Deep Links         │
+│ 4. AppEventsBus (Reactive) │ 📡 AsyncStreams y Eventos Desacoplados (Login, Logout, Sync)      │
+└────────────────────────────┴───────────────────────────────────────────────────────────┘
+```
+
+#### Los 4 Fallos Comunes en la Industria (Que ocurren si no separas estas capas)
+
+Sin esta delimitación rigurosa de responsabilidades, las aplicaciones iOS/macOS caen sistemáticamente en estos 4 antipatrones:
+
+1. **💥 El Crash del Deep Link Huérfano:**
+   - *El error:* Un Deep Link externo abre directamente una pantalla privada (`app://loans/apply` o `app://banking/transfer`). El `ViewModel` o `UseCase` asume que `session!` o `user.token!` existen y la app crashea en producción si el usuario no estaba autenticado.
+   - *Cómo ayuda DaggerSwift:* `@Precondition` evalúa la sesión en la raíz del sub-grafo y **bloquea la construcción antes de tocar la red** (`allocations == 0`), devolviendo un error tipado explícito (`GraphError.unmetPrecondition`).
+2. **🐘 El Monolito del Inyector Todopoderoso:**
+   - *El error:* Forzar al framework de DI a ser Router, Navigation Manager y State Machine, guardando referencias a `UINavigationController` o ventanas de SwiftUI dentro del contenedor.
+   - *La postura de DaggerSwift:* **Cero UI.** El motor de dependencias jamás debe saber qué es un `NavigationStack`, un `sheet` o un modal.
+3. **🍝 Acoplamiento Espagueti entre Pantallas:**
+   - *El error:* Que la pantalla de Login tenga que saber a dónde ir después:
+     ```swift
+     // ❌ Antipatrón: Login acoplado a toda la app
+     if cameFromLoans { navigateToLoans() }
+     else if cameFromProfile { navigateToProfile() }
+     ```
+   - *La solución limpia:* El módulo de Login **jamás conoce a los demás módulos**. Solo emite un evento desacoplado `AppEvent.userAuthenticated(session)`. Quien decide qué hacer es el `AppCoordinator`.
+4. **🧟 Fuga de Estado Zombie al hacer Logout (*Captive Session Bug*):**
+   - *El error:* Al cerrar sesión, los ViewModels o Repositorios viejos siguen vivos en diccionarios estáticos globales. Si otro usuario se loguea en el mismo teléfono, ve el saldo o las tarjetas del usuario anterior.
+   - *Cómo lo resuelve DaggerSwift:* Cada flujo vive en un `GraphScope` aislado. Al hacer logout se ejecuta `teardownScope()`, vaciando la memoria y auditando con `WeakObjectBox` que no quede ningún retain cycle.
+
+---
+
+#### El Flujo Canónico Completo: ¿Quién resuelve lo que falta?
+
+Si intentas abrir `LoansFeatureView` mediante un Deep Link cuando la sesión no existe, **el Scope no puede ni debe resolver la sesión solo** (obtener credenciales requiere interacción humana de UI). 
+
+La colaboración armónica entre las 4 capas se orquesta así:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant OS as Sistema / DeepLink
+    participant Coord as AppCoordinator (Navegación / Flujos)
+    participant Comp as RootComposer (Ensamblador de Pantallas)
+    participant Dagger as DaggerSwift v2 (Scopes & Preconditions)
+    participant Events as AppEventsBus (AsyncSequence / Events)
+    participant Login as LoginFlowView (Feature UI)
+    participant Loans as LoansFeatureView (Feature UI)
+
+    OS->>Coord: Abre DeepLink ("app://loans/apply")
+    Note over Coord: El Coordinator intenta navegar al flujo de Préstamos
+    Coord->>Comp: Pide ensamblar LoansFeatureView
+    Comp->>Dagger: Intenta resolver GetLoansDashboardUseCase
+    Note over Dagger: Evalúa @Precondition(AuthenticatedCountrySession)
+    Dagger-->>Comp: Cortocircuito: GraphError.unmetPrecondition(AuthenticatedCountrySession.self)
+    Comp-->>Coord: Error Explícito: .requiresPrerequisite(AuthenticatedCountrySession.self)
+
+    Note over Coord: ¡El Coordinator toma el control del flujo UI!
+    Coord->>Events: Se suscribe a AppEvent.userAuthenticated
+    Coord->>Login: Presenta modal interactivo de Login
+
+    Note over Login: Usuario ingresa credenciales o FaceID
+    Login->>Events: Emite AppEvent.userAuthenticated(session)
+
+    Note over Coord: AppCoordinator recibe el evento de éxito
+    Coord->>Login: Cierra modal de Login
+    Coord->>Dagger: Alimenta SessionScope con la nueva sesión (Plug)
+    Coord->>Comp: Reintenta ensamblar LoansFeatureView (¡Ahora sí cumple @Precondition!)
+    Comp->>Dagger: Resuelve dependencias con éxito (allocations > 0)
+    Comp-->>Coord: Devuelve LoansFeatureView lista
+    Coord->>Loans: Navega a LoansFeatureView
+```
+
+---
+
+#### Ejemplo de Código: Separación por Capas en Swift 6
+
+##### 1. Capa de Eventos Reactivos (`AppEventsBus`)
+```swift
+public enum AppEvent: Sendable {
+    case userAuthenticated(AuthenticatedCountrySession)
+    case userLoggedOut
+}
+
+public actor AppEventsBus {
+    public static let shared = AppEventsBus()
+    private var continuations: [UUID: AsyncStream<AppEvent>.Continuation] = [:]
+
+    public func subscribe() -> AsyncStream<AppEvent> {
+        let id = UUID()
+        return AsyncStream { continuation in
+            continuation.onTermination = { [weak self] _ in
+                Task { await self?.remove(id) }
+            }
+            self.continuations[id] = continuation
+        }
+    }
+
+    public func emit(_ event: AppEvent) {
+        for continuation in continuations.values {
+            continuation.yield(event)
+        }
+    }
+
+    private func remove(_ id: UUID) { continuations.removeValue(forKey: id) }
+}
+```
+
+##### 2. Capa de Ensamblaje (`RootComposer` - Composition Root)
+```swift
+@MainActor
+public enum RootComposer {
+    public enum AssemblyResult {
+        case success(AnyView)
+        case requiresPrerequisite(Any.Type, retry: () -> AnyView)
+    }
+
+    public static func makeLoansFeature() -> AssemblyResult {
+        // Intenta resolver con DaggerSwift:
+        do {
+            let useCase = try FintechScope.resolve(GetLoansDashboardUseCase.self)
+            let viewModel = LoansViewModel(useCase: useCase)
+            return .success(AnyView(LoansFeatureView(viewModel: viewModel)))
+        } catch let GraphError.unmetPrecondition(type, _) {
+            // Traduce el error de memoria a una intención de navegación:
+            return .requiresPrerequisite(AuthenticatedCountrySession.self) {
+                // Closure de reintento una vez que la sesión esté satisfecha
+                let useCase = try! FintechScope.resolve(GetLoansDashboardUseCase.self)
+                return AnyView(LoansFeatureView(viewModel: LoansViewModel(useCase: useCase)))
+            }
+        } catch {
+            fatalError("Error irrecuperable: \(error)")
+        }
+    }
+}
+```
+
+##### 3. Capa de Navegación y Flujos (`AppCoordinator`)
+```swift
+@MainActor
+@Observable
+public final class AppCoordinator {
+    public var currentView: AnyView?
+    public var presentedModal: AnyView?
+
+    public func handleDeepLink(_ url: URL) {
+        if url.path == "/loans/apply" {
+            switch RootComposer.makeLoansFeature() {
+            case .success(let view):
+                self.currentView = view
+            case .requiresPrerequisite(let prerequisite, let retryClosure):
+                if prerequisite == AuthenticatedCountrySession.self {
+                    // 1. Abre el modal de Login:
+                    self.presentedModal = AnyView(LoginFeatureView())
+                    // 2. Escucha el evento de login exitoso para reanudar el flujo:
+                    Task {
+                        for await event in await AppEventsBus.shared.subscribe() {
+                            if case .userAuthenticated(let session) = event {
+                                self.presentedModal = nil
+                                self.currentView = retryClosure()
+                                break
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+```
+
+* **Independencia Total:** `LoginFeatureView` jamás conoce a `LoansFeatureView`.
+* **Pureza de `Domain`:** Tu capa de dominio no sabe de routers, ventanas ni eventos de UI.
+* **Separación de Responsabilidades:** `DaggerSwift` gestiona la **memoria y las dependencias**, `RootComposer` **ensambla**, `AppCoordinator` **navega**, y `AppEventsBus` **comunica**.
+
+---
+
+### 2.7 Pureza en la UI: Inmunidad al Vendor Lock-In, Previews Nativas y Taxonomía de Estados
+
+Un principio no negociable en Clean Architecture es que **la capa de presentación (UI) jamás debe acoplarse a un framework de Inyección de Dependencias**.
+
+#### 1. La Regla de Oro: Las Vistas NO hacen `import DaggerSwift`
+
+Tentar al desarrollador con modificadores como `.daggerScope(MyScope.self)` o `.daggerPreview(...)` dentro de las vistas de SwiftUI es un **antipatrón grave**:
+* **Acoplamiento Directo (Vendor Lock-In):** Si la librería de DI se rompe, se depreca o se sustituye en el futuro, tendrías que modificar o reescribir **cada una de las vistas** de la aplicación.
+* **Invasión de Responsabilidades:** Una vista de SwiftUI solo debe saber cómo renderizar su estado y emitir eventos de interacción. Jamás debe gestionar el ciclo de vida de un contenedor de memoria.
+
+> [!IMPORTANT]
+> **En DaggerSwift v2:** Los archivos de vistas (`*View.swift`) **nunca importan `DaggerSwift`**. Solo usan constructores de Swift puro (`init(viewModel:)` o `init(useCase:)`).
+
+#### 2. Previews Nativas de SwiftUI en Milisegundos
+
+Al usar inyección por constructor estándar, las Previews de Xcode compilan y renderizan de forma **100% nativa**, sin inicializar contenedores, sin `@TaskLocal` y sin overrides globales:
+
+```swift
+// LoansFeatureView.swift
+// ⚠️ Observa: ¡CERO imports de DaggerSwift!
+import SwiftUI
+
+public struct LoansFeatureView: View {
+    @State private var viewModel: LoansViewModel
+
+    public init(viewModel: LoansViewModel) {
+        _viewModel = State(initialValue: viewModel)
+    }
+
+    public var body: some View {
+        VStack(spacing: 16) {
+            Text("Saldo Disponible: $\(viewModel.balance)")
+            Button("Solicitar Crédito") {
+                viewModel.applyForLoan()
+            }
+        }
+    }
+}
+
+// ✅ Previews nativas con Mocks por constructor:
+#Preview("Usuario con Préstamo Activo") {
+    LoansFeatureView(viewModel: LoansViewModel(
+        useCase: MockLoansUseCase(balance: 15_000)
+    ))
+}
+
+#Preview("Usuario Sin Préstamos") {
+    LoansFeatureView(viewModel: LoansViewModel(
+        useCase: MockLoansUseCase(balance: 0)
+    ))
+}
+```
+
+#### 3. El Ciclo de Vida del Scope Pertenece al `AppCoordinator`, No a la Vista
+
+¿Por qué no usamos un cache débil automático (`@WeakShared` o `.shared` de Factory)?
+* **Limitación Técnica de Swift:** Los caches débiles (`weak`) **solo funcionan con clases (`class: AnyObject`)**. Fallan rotundamente con tipos por valor (`struct`), tuplas o `actor`.
+* **Riesgo Crítico de Pérdida de Estado:** En transiciones de navegación entre pantallas secundarias, si durante 1 frame o milisegundo ninguna vista retiene el servicio, **ARC purga la instancia débil**, perdiendo el estado en memoria de forma silenciosa e impredecible.
+* **Control Determinístico:** El ciclo de vida de un scope (`teardownScope()`) no debe dejarse al azar del recolector de basura. El `AppCoordinator` abre el scope cuando entra al flujo y lo destruye de forma explícita y auditada al terminar el flujo.
+
+```swift
+// LoansCoordinator.swift
+@MainActor
+public final class LoansCoordinator {
+    public var currentSheet: AnyView?
+
+    public func finishLoansFlow() {
+        // 1. Cierra la pantalla en la UI:
+        self.currentSheet = nil
+        
+        // 2. Destruye el Scope de Memoria (Solo el Coordinator conoce el Scope):
+        let leaks = FintechScope.teardownScope()
+        assert(leaks.isEmpty, "Fuga detectada al salir de Loans: \(leaks)")
+    }
+}
+```
+
+#### 4. Taxonomía de Estados (`States`) y sus Fronteras Reales
+
+Para no mezclar el estado de la UI con el estado del negocio ni con las dependencias:
+
+| Tipo de Estado | ¿Dónde vive en RAM? | ¿Quién lo gestiona? | ¿Conoce `DaggerSwift`? |
+| :--- | :--- | :--- | :---: |
+| **1. UI State** | `@State`, `@FocusState` | La Vista de SwiftUI | ❌ **No**. Swift nativo efímero. |
+| **2. Feature State** | `@Observable ViewModel` | La Vista lo retiene, el `RootComposer` lo ensambla | ❌ **No**. Recibe UseCases en su `init`. |
+| **3. Session State** | `UserSession`, `AuthTokens` | En el Grafo (`@Scoped`) con `@Precondition` | ✅ **Sí** (`SessionScope`). Muere al Logout. |
+| **4. Global State** | Remote Config, Theme, Network | En el Grafo (`@Singleton`) | ✅ **Sí** (`GlobalScope`). Vive con la App. |
+
+---
+
 ## 3. 🧪 Manual Completo de Pruebas (`DaggerSwiftTesting` + Unit Tests + Linter)
 
 DaggerSwift v2 está diseñado para probar tu aplicación en **3 niveles complementarios**:
@@ -538,33 +813,118 @@ En [`ArchitectureLinterTests.swift`](./Sources/SampleProyect/Tests/AppGraphTests
 
 ---
 
-## 4. 📊 Benchmarks y Comparativa contra Otras Librerías
+## 4. 🥊 Debate Empírico y Benchmarks Reales (`DaggerSwift` vs `Point-Free TCA` vs `Factory` vs `Swinject`)
 
-Resultados reales ejecutando [`Test/BenchmarkComparisonTests.swift`](./Test/BenchmarkComparisonTests.swift) (**10,000 resoluciones** en Apple Silicon `arm64e-apple-macos`):
+Para mantener el paquete principal `DaggerSwift` con **0 dependencias externas**, los benchmarks y el debate contra las librerías reales del ecosistema viven en un **paquete SPM dedicado e independiente**: [`Benchmarks/Package.swift`](./Benchmarks/Package.swift).
 
-| Escenario / Librería | Tiempo (10,000 iter.) | Latencia / Resolución | Seguridad en Compilación | Cortocircuito `@Precondition` | Auditoría Leaks (`WeakObjectBox`) |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **1. DaggerSwift Modo Explícito (`@Module` + `@Scope` + `@Inject`)** | **`1.74 ms`** | **`~174 ns`** | **✅ 100% Compile-Time** | **✅ Sí** | **✅ Sí** |
-| **2. Service Locator Dinámico (Swinject / Resolver style)** | `13.62 ms` | `~1.36 µs` | ❌ Falla en Runtime (`nil` / `try!`) | ❌ No existe | ❌ No existe |
-| **3. DaggerSwift Motor DAG (`ScopeContainer` + CycleCheck)** | `23.05 ms` | `~2.30 µs` | ✅ Verificado con `expectGraph` | **✅ Sí (`3.82 µs` bloqueo en frío)** | **✅ Sí (`teardown() -> [String]`)** |
+Ese paquete descarga e importa las versiones oficiales de:
+- **[`pointfreeco/swift-dependencies`](https://github.com/pointfreeco/swift-dependencies)** (la librería de DI de **TCA / The Composable Architecture**)
+- **[`hmlongco/Factory`](https://github.com/hmlongco/Factory)** (`Container` + `@Injected`)
+- **[`Swinject/Swinject`](https://github.com/Swinject/Swinject)** (`Swinject.Container`)
+- **`DaggerSwift`** (Modo Explícito Compile-Time y Modo Motor DAG `ScopeContainer`)
 
-👉 **Lee el análisis profundo de los 5 huecos de otras librerías, puntos fuertes y puntos débiles en [`LIBRO_INYECCION_Y_BENCHMARKS.md`](./LIBRO_INYECCION_Y_BENCHMARKS.md).**
+```bash
+# Ejecutar el debate cara a cara contra las librerías reales (10 tests empíricos):
+swift test --package-path Benchmarks
+```
+
+### 4.1 Gráfico Visual de Rendimiento (10,000 Resoluciones Reales en Apple Silicon)
+
+```text
+╔══════════════════════════════════════════════════════════════════════════════════════════════╗
+║     🥊 DEBATE EMPÍRICO Y BENCHMARK REAL (10,000 RESOLUCIONES EN PAQUETE SPM DEDICADO)        ║
+╠══════════════════════════════════════════════════════════════════════════════════════════════╣
+║ TIEMPO DE EJECUCIÓN ORDENADO (Menor barra = Más rápido):                                     ║
+  1. DaggerSwift Explícito (@Module/@Scope) |   1.34 ms (  1.0x) |█
+  2. Point-Free swift-dependencies (TCA)    |  11.23 ms (  8.4x) |██████
+  3. DaggerSwift Motor DAG (ScopeContainer) |  19.18 ms ( 14.4x) |███████████
+  4. Swinject (Dynamic Dictionary)          |  20.50 ms ( 15.3x) |████████████
+  5. Factory (Container.shared)             |  48.15 ms ( 36.0x) |██████████████████████████████
+╚══════════════════════════════════════════════════════════════════════════════════════════════╝
+```
+
+```mermaid
+xychart-beta
+    title "Tiempo de 10,000 Resoluciones en ms (Menor es Mejor)"
+    x-axis ["DaggerSwift Explícito", "Point-Free (TCA)", "DaggerSwift DAG", "Swinject", "Factory"]
+    y-axis "Milisegundos (ms)" 0 --> 55
+    bar [1.34, 11.23, 19.18, 20.50, 48.15]
+```
+
+### Matriz Comparativa de Capacidades
+
+| Capacidad Arquitectónica | Swinject | Factory | Point-Free `swift-dependencies` (TCA) | **DaggerSwift v2** |
+| :--- | :---: | :---: | :---: | :---: |
+| **Verificación en Tiempo de Compilación** | ❌ No (`nil` en Runtime) | ⚠️ Parcial | ⚠️ Falla en Runtime si falta `testValue` | **✅ Sí (`@Module` Contracts + `@Scope`)** |
+| **Cero contaminación en `Domain` (`init` puro)** | ❌ `resolver.resolve` | ❌ `@Injected` | ❌ `@Dependency` dentro de `Domain` | **✅ Sí (`@Inject` genera `init` limpio)** |
+| **Variantes de Producto (Multi-Country/Versiones) sin Naming Layers** | ❌ No (Parche con `name:` String) | ❌ No (Muta contenedor global) | ⚠️ Solo en Tests (`withDependencies`) | **✅ Sí (Nativo con `@Module` + `@Scope`)** |
+| **Nodos `@Precondition` (Cortocircuito de Sesión)** | ❌ No existe | ❌ No existe | ❌ No existe | **✅ Sí (`@Precondition` nativo, 0 allocs)** |
+| **Nodos `@BusinessRule` (A/B Flags en el Grafo)** | ❌ Manual | ❌ Manual | ❌ Manual | **✅ Sí (`@BusinessRule` auditable)** |
+| **Herencia de Evolución `@Module(0.1 -> 1.0 -> 2.0)`** | ❌ No existe | ❌ No existe | ❌ No existe | **✅ Sí (`@Scope` + `includes:`)** |
+| **`teardown()` Jerárquico + Auditoría de Retain Cycles** | ❌ No audita leaks | ❌ No audita leaks | ❌ No audita leaks | **✅ Sí (`WeakObjectBox` devuelve fugas)** |
+| **Weak Cache `.shared` automático sin `teardown()`** | ❌ No | **✅ Sí (`.shared`)** | ❌ No | ❌ `@Scoped` exige llamar a `teardown()` |
+| **Override `@TaskLocal` profundo sin tocar `init`** | ❌ No | ❌ No | **✅ Sí (`withDependencies`)** | ❌ Exige constructor o `ScopeContainer` |
+
+---
+
+### 4.2 Round 1: Obligando a Fallar a las Otras Librerías (Donde Gana `DaggerSwift`)
+
+En [`DIFrameworksDebateTests.swift`](./Benchmarks/Tests/DIFrameworksDebateTests/DIFrameworksDebateTests.swift) escribimos pruebas que fuerzan a cada librería real a exhibir sus huecos arquitectónicos:
+
+| Test en `DIFrameworksDebateTests` | Qué Librería Falla y Cómo | Cómo Gana `DaggerSwift` |
+| :--- | :--- | :--- |
+| **`Round 1.1` (`testSwinjectFailsAtRuntimeOnMissingRegistration`)** | ❌ **`Swinject`**: Si olvidas hacer `container.register(BenchRepositoryProtocol.self)`, el código **compila con 0 errores** y `swinject.resolve(...)` devuelve `nil` en Runtime (o crashea con `!`). | ✅ **Verificación Compile-Time:** Con `BenchModuleContract` + `@Module`, si falta una dependencia el archivo **no compila en Xcode**. |
+| **`Round 1.2` (`testPointFreeDependenciesFailsWhenUnconfiguredInTest`)** | ❌ **`Point-Free swift-dependencies` (TCA)**: Si un `UseCase` usa `@Dependency(\.unconfiguredRepo)` y alguien lo invoca sin envolverlo en `withDependencies { ... }`, el proyecto compila pero **dispara un Issue/Fallo en Runtime**. Además, obliga a `Domain` a hacer `import Dependencies`. | ✅ **Pureza de `Domain`:** `@Inject` solo sintetiza un `public init(...)` puro sin acoplar `Domain` a ningún contenedor ni `@TaskLocal` oculto. |
+| **`Round 1.3` (`testFactoryGlobalStatePollutionWhenResetIsForgotten`)** | ❌ **`Factory`**: Cuando un flujo o test hace `Container.shared.benchRepo.register { ... }` y olvida llamar a `Container.shared.manager.reset()`, **contamina globalmente** a todas las pantallas siguientes (`420` en vez de `42`). | ✅ **Aislamiento por Instancia/Módulo:** Cada `ScopeContainer` o `@Module` es 100% independiente; no existe estado mutable global compartido por accidente. |
+| **`Round 1.4` (`testAllThreeLibrariesAllocateDependenciesBeforeCheckingPreconditions`)** | ❌ **`Swinject` + `Factory` + `Point-Free TCA`**: Ninguna tiene `@Precondition`. Aunque la sesión sea `nil`, las tres **instancian el `Repository` en RAM (`allocations == 1`)** antes de que la pantalla descubra que no había sesión. | ✅ **Cortocircuito `@Precondition`:** `DaggerSwift` evalúa `@Precondition` en la raíz del sub-grafo y aborta antes de crear dependencias hijas (**`allocations == 0`**). |
+| **`Round 1.5` (`testMemoryLeakDetectionOnFeatureTeardown`)** | ❌ **`Swinject` + `Factory` + `Point-Free TCA`**: Si un `ViewModel` tiene un *retain cycle* (`self.selfRetainCycle = { _ = self }`), ninguna de las 3 librerías te avisa al cerrar la pantalla. | ✅ **Auditoría `WeakObjectBox`:** `featureScope.teardown()` devuelve `["LeakyFeatureViewModel"]` detectando la fuga de memoria automáticamente. |
+| **`Round 1.6` (`testCaptiveDependencyScopeHierarchyViolation`)** | ❌ **`Swinject` + `Factory` + `Point-Free TCA`**: Permiten que el contenedor raíz resuelva y secuestre un objeto efímero de pantalla (*Captive Dependency Bug*). | ✅ **Regla de Oro de Scopes:** Intentar resolver un `@Scoped` de `BenchFeatureScope` desde `root` sin abrir `makeChildScope` lanza `GraphError.scopeViolation`. |
+
+---
+
+### 4.3 Round 2: Comparativa de Decisiones de Diseño y Cómo Resolver Variantes sin "Naming Layer"
+
+Un buen diseño reconoce qué decisiones tomó cada librería y por qué:
+
+```mermaid
+flowchart TD
+    subgraph Round2 ["🥊 Comparativa de Paradigmas"]
+        PF["Point-Free TCA\nwithDependencies (@TaskLocal)\nPropagación implícita a 3 niveles\nsin tocar init()"] -->|"Trade-off"| D_PF["DaggerSwift: Pureza de Inyección por Constructor\nDomain no importa DI ni usa @TaskLocal mágicos"]
+        FAC["Factory\nScope .shared (Weak Cache)\nSe libera solo con ARC\nsin llamar a teardown()"] -->|"Trade-off"| D_FAC["DaggerSwift: Ciclo de Vida Explícito\nScopeContainer controla teardown() y audita retain cycles"]
+        SW["Swinject\nregister(..., name: 'mx')\nBolsa de gatos con Strings mágicos\ny resolución directa por contenedor"] -->|"Solución Limpia"| D_SW["DaggerSwift: Variantes Tipadas sin Naming Layer\nEl tipo es el contrato; el Scope selecciona el @Module"]
+    end
+```
+
+#### ¿Por qué no usamos `name: String` o "Naming Layers"?
+En `Swinject`, cuando necesitan dos implementaciones del mismo protocolo (ej. México y USA), recurren a strings dinámicos (`name: "mexico"`). Esto introduce:
+1. **Riesgo de Typos en Runtime:** Escribir `"mejico"` o `"usa_v2"` compila sin advertencias y crashea en producción.
+2. **Contaminación con Service Locator:** Obliga a invocar directamente al contenedor (`container.resolve(..., name: "mexico")`).
+3. **Capa Artificial Innecesaria:** Se inventa un *layer name* para parchar la falta de soporte modular de primer nivel.
+
+#### Cómo resuelve `DaggerSwift` las Variantes sin Naming Layers (Clean Architecture):
+En `DaggerSwift`, indexamos estrictamente por tipo (`TypeKey` / `ObjectIdentifier(T.self)`) para garantizar **seguridad en tiempo de compilación y cero costo en CPU**. Las variantes se modelan limpiamente en los 3 ejes de la arquitectura:
+- **1. Variantes Hermanas (Multi-Country / Regional):** `MexicoNewsModule` y `USANewsModule` conforman el mismo contrato `CountryNewsModuleContract`. El caso de uso solo pide `any CountryLocaleProviderProtocol`. Quien conmuta la variante es el `@Scope` activo (`CountryNewsScope.module(for: .mexico)`). **Cero strings mágicos.**
+- **2. Variantes de Evolución (`0.1 -> 1.0 -> 2.0`):** `@Module(1.0, includes: [FintechModuleV0_1.self])` evoluciona componentes específicos con herencia real sin duplicar código.
+- **3. Variantes Dinámicas / A/B:** `@BusinessRule` conmuta entre variantes en caliente según Feature Flags del servidor.
+
+👉 **Lee el análisis completo en [`LIBRO_INYECCION_Y_BENCHMARKS.md`](./LIBRO_INYECCION_Y_BENCHMARKS.md).**
 
 ---
 
 ## 5. 📱 Demos Reales Incluidas (`SampleProyect`) y Estructura del Repositorio
 
 ```text
-├── Package.swift                        # Configuración SPM (Swift 6.0, macOS 14+ / iOS 17+, CLI + Macros + Testing)
+├── Package.swift                        # Paquete principal DaggerSwift (0 dependencias externas)
+├── Benchmarks/                          # Paquete SPM Independiente de Debate y Benchmarks Reales:
+│   ├── Package.swift                    # Importa DaggerSwift + Point-Free swift-dependencies + Factory + Swinject
+│   └── Tests/DIFrameworksDebateTests/
+│       ├── DIFrameworksDebateTests.swift # Round 1 (Ellos fallan), Round 2 (DaggerSwift falla), Round 3 (Benchmark + Gráfico)
+│       └── SwinjectHelper.swift         # Desambiguación de tipos Container entre Swinject y Factory
 ├── Assets/
 │   └── dagger2-hero.png                 # Portada oficial de DaggerSwift v2
 ├── LIBRO_INYECCION_Y_BENCHMARKS.md      # Libro Técnico: Resolución Explícita vs Dinámica y Benchmarks
 ├── Sources/
-│   ├── DaggerSwift/
-│   │   ├── GraphScope.swift             # ScopeID, GraphScope, GlobalScope, Precondition, ScopeDisposable, GraphError
-│   │   ├── ScopeContainer.swift         # Motor DAG, Árbol de Scopes, Parameter Packs y Auditoría WeakObjectBox
-│   │   ├── SwiftUIGraph.swift           # GraphScopeView y ciclo de vida automático en SwiftUI
-│   │   └── Module.swift                 # Macros: @Module(0.1/1.0/2.0), @Scope (ModulePalette), @Inject, @Singleton, @Scoped, @Provider, @BusinessRule, @Precondition
+│   ├── DaggerSwift/                     # Motor DAG, GraphScope, ScopeContainer, Macros (@Module, @Scope, @Inject...)
 │   ├── DaggerSwiftMacros/               # Compiler Plugin nativo Swift 6 (protocolo JSON HostToPluginMessage, <0.3s build)
 │   ├── DaggerSwiftTesting/              # DSL declarativo para pruebas del grafo (expectGraph, matchesContract, when)
 │   ├── DaggerCLI/                       # Herramienta de terminal (swift run dagger-cli)
@@ -572,13 +932,7 @@ Resultados reales ejecutando [`Test/BenchmarkComparisonTests.swift`](./Test/Benc
 │   │   ├── Sources/
 │   │   │   ├── AppFoundation/           # Modelos base y Design System compartido
 │   │   │   ├── MultiCountryNewsDemo/    # Demo 1: Login Multi-Country + Noticias en 4 Idiomas (MX, US, BR, FR)
-│   │   │   │   ├── Domain/              # Entities, Repository Protocols (CountryNewsModuleContract) y UseCases (@Inject)
-│   │   │   │   ├── Data/                # Actores Swift 6 por país y @Module(1.0, scope: CountryNewsScope.self) con @Precondition por país
-│   │   │   │   └── Presentation/        # MVVM: CountryNewsPortalViewModel (@Inject) + CountryNewsFeatureView
 │   │   │   ├── FintechMockupDemo/       # Demo 2: App Mockup Fintech con Paleta @Module(0.1/1.0/2.0) + @Scope + A/B Flags
-│   │   │   │   ├── Domain/              # Entities, Repository Protocols (FintechModuleContract) y GetFintechDashboardUseCase
-│   │   │   │   ├── Data/                # FintechBankingActor y @Module(0.1), @Module(1.0), @Module(2.0) + @Scope
-│   │   │   │   └── Presentation/        # MVVM: FintechMockupViewModel (@Inject) + FintechMockupFeatureView
 │   │   │   ├── Core/                    # Demo 3 (Domain): Protocolos, @Precondition ValidatedSession y UseCases (@Inject)
 │   │   │   ├── Services/                # Demo 3 (Data): LiveGitHubRepository + LiveGitHubModule (1.0) / LiveGitHubModuleV2 (2.0)
 │   │   │   ├── Features/                # Demo 3 (Presentation): FeedViewModel (@Inject), FeedView y Sub-Scope RepoDetailModule
@@ -590,8 +944,7 @@ Resultados reales ejecutando [`Test/BenchmarkComparisonTests.swift`](./Test/Benc
 └── Test/
     ├── ModuleTest.swift                 # Pruebas de retrocompatibilidad DaggerSwift v1
     ├── DaggerMacrosV2Tests.swift        # Pruebas de expansión de macros @Module y @Inject
-    ├── GraphEngineV2Tests.swift         # Pruebas de motor DAG, Scopes, Preconditions y Retain Cycles
-    └── BenchmarkComparisonTests.swift   # Benchmarks de 10,000 iteraciones y validación de huecos vs otras librerías
+    └── GraphEngineV2Tests.swift         # Pruebas de motor DAG, Scopes, Preconditions y Retain Cycles
 ```
 
 ---
@@ -599,13 +952,16 @@ Resultados reales ejecutando [`Test/BenchmarkComparisonTests.swift`](./Test/Benc
 ## 🚀 Comandos Rápidos
 
 ```bash
-# 1. Ejecutar tests del motor principal DaggerSwift + Benchmarks comparativos (20 tests)
+# 1. Ejecutar el Debate Empírico y Benchmarks contra Point-Free TCA, Factory y Swinject (10 tests)
+swift test --package-path Benchmarks
+
+# 2. Ejecutar tests del motor principal DaggerSwift (16 tests)
 swift test
 
-# 2. Ejecutar Linter de Arquitectura/SOLID + Unit Tests + Graph Tests del SampleProyect (12 tests)
+# 3. Ejecutar Linter de Arquitectura/SOLID + Unit Tests + Graph Tests del SampleProyect (12 tests)
 swift test --package-path Sources/SampleProyect
 
-# 3. Ejecutar el CLI interactivo de DaggerSwift
+# 4. Ejecutar el CLI interactivo de DaggerSwift
 swift run dagger-cli help
 ```
 
@@ -620,3 +976,4 @@ swift run dagger-cli help
 ## Licencia
 
 MIT
+
