@@ -35,45 +35,43 @@ struct AppGraphTests {
             .resolved(FeedViewModel.self)
     }
 
-    @Test("Precondición con expectWhenCondition: al iniciar sesión se resuelve el detalle", .tags(.precondition))
-    func testPrecondicionConExpectWhenCondition() {
-        expectWhenCondition(ShowcaseCoreModule.self, FakerGitHubModule.self) { (auth: any AuthRepositoryProtocol) in
-            auth.loginAsSaldivar()
-        }
-        .inChildScope(RepoDetailModule.self, binding: GitHubRepoItem.flagshipDaggerRepo)
-        .resolved(ValidatedSession.self)
-        .resolved(RepoDetailInspector.self)
-        .tornDownCleanly()
-    }
-
-    @Test("Precondición antes y después: bloqueado sin sesión y resuelto tras login", .tags(.precondition))
-    func testPrecondicionAntesYDespues() {
-        expectGraph(ShowcaseCoreModule.self, FakerGitHubModule.self)
-            .inChildScope(RepoDetailModule.self, binding: GitHubRepoItem.flagshipDaggerRepo)
-            .blocked(RepoDetailInspector.self, by: ValidatedSession.self)
+    @Test("Precondición: sin sesión falla con preconditionFailure() y tras login se resuelve", .tags(.precondition))
+    func testPrecondicionSinNavegarScopes() {
+        expectGraph(ShowcaseCoreModule.self, FakerGitHubModule.self, RepoDetailModule.self)
+            .whenResolved(GitHubRepoItem.self).returns(.flagshipDaggerRepo)
+            .dependency(RepoDetailInspector.self).preconditionFailure()
             .when { (auth: any AuthRepositoryProtocol) in
                 auth.loginAsSaldivar()
             }
-            .resolved(ValidatedSession.self)
-            .resolved(RepoDetailInspector.self)
-            .tornDownCleanly()
+            .dependency(ValidatedSession.self).resolved()
+            .dependency(RepoDetailInspector.self).resolved()
+    }
+
+    @Test("Precondición directa con expectWhenCondition", .tags(.precondition))
+    func testPrecondicionConExpectWhenCondition() {
+        expectWhenCondition(ShowcaseCoreModule.self, FakerGitHubModule.self, RepoDetailModule.self) { (auth: any AuthRepositoryProtocol) in
+            auth.loginAsSaldivar()
+        }
+        .whenResolved(GitHubRepoItem.self).returns(.flagshipDaggerRepo)
+        .dependency(ValidatedSession.self).resolved()
+        .dependency(RepoDetailInspector.self).resolved()
     }
 
     @Test("Regla de negocio (@BusinessRule): cambia de Bento v2 a Compacto v1", .tags(.businessRule))
     func testReglaDeNegocioConWhen() {
         expectGraph(ShowcaseCoreModule.self, FakerGitHubModule.self)
-            .resolved((any RepoExplorerStrategyProtocol).self) { $0.usesBentoGrid == true }
+            .dependency((any RepoExplorerStrategyProtocol).self).resolved { $0.usesBentoGrid == true }
             .when { (flags: any FeatureFlagRepositoryProtocol) in
                 flags.setBentoV2(false)
             }
-            .resolved((any RepoExplorerStrategyProtocol).self) { $0.usesBentoGrid == false }
+            .dependency((any RepoExplorerStrategyProtocol).self).resolved { $0.usesBentoGrid == false }
     }
 
-    @Test("Módulo faltante: sin FakerGitHubModule no se pueden resolver los casos de uso", .tags(.graph))
+    @Test("Módulo faltante: sin FakerGitHubModule falla con unresolvedFailure()", .tags(.graph))
     func testModuloFaltante() {
         expectGraph(ShowcaseCoreModule.self)
-            .unresolved((any GitHubRepositoryProtocol).self)
-            .unresolved(GetProfileUseCase.self)
-            .unresolved(GetRepositoriesUseCase.self)
+            .dependency((any GitHubRepositoryProtocol).self).unresolvedFailure()
+            .dependency(GetProfileUseCase.self).unresolvedFailure()
+            .dependency(GetRepositoriesUseCase.self).unresolvedFailure()
     }
 }
