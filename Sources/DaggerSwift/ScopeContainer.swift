@@ -56,6 +56,7 @@ private struct GraphRecipe {
     let typeName: String
     let lifetime: NodeLifetime
     let dependencies: [String]
+    let dependencyTypes: [Any.Type]
     let build: (ScopeContainer) throws -> Any
 }
 
@@ -283,12 +284,15 @@ public final class ScopeContainer: @unchecked Sendable {
         let key = ObjectIdentifier(type)
         let typeName = String(reflecting: type)
         var depNames: [String] = []
+        var depTypes: [Any.Type] = []
         repeat depNames.append(String(reflecting: (each D).self))
+        repeat depTypes.append((each D).self)
 
         recipes[key] = GraphRecipe(
             typeName: typeName,
             lifetime: .precondition(P.scopeID),
             dependencies: depNames,
+            dependencyTypes: depTypes,
             build: { resolver in
                 let result: P?
                 do {
@@ -473,6 +477,28 @@ public final class ScopeContainer: @unchecked Sendable {
         return findRecipeUpwards(for: ObjectIdentifier(type)) != nil
     }
 
+    /// Inspecciona el sub-grafo de recetas de `type` (sin instanciar ningún objeto)
+    /// y devuelve todas las `@Precondition` de las que depende directa o indirectamente.
+    public func preconditionsInSubgraph<T>(for type: T.Type) -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        var visited = Set<ObjectIdentifier>()
+        var result: [String] = []
+        collectPreconditions(forAny: type, visited: &visited, into: &result)
+        return result
+    }
+
+    /// Inspecciona el sub-grafo de recetas de `type` (sin instanciar ningún objeto)
+    /// y devuelve todas las `@BusinessRule` de las que depende directa o indirectamente.
+    public func businessRulesInSubgraph<T>(for type: T.Type) -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        var visited = Set<ObjectIdentifier>()
+        var result: [String] = []
+        collectBusinessRules(forAny: type, visited: &visited, into: &result)
+        return result
+    }
+
     // MARK: - Destrucción de Scope y Auditoría de Memory Leaks
 
     /// Cierra este Scope y todos sus Scopes hijos en cascada, liberando todas sus instancias de RAM.
@@ -539,6 +565,68 @@ public final class ScopeContainer: @unchecked Sendable {
         return parent?.findRecipeUpwards(for: key)
     }
 
+    private func collectPreconditions(
+        forAny currentType: Any.Type,
+        visited: inout Set<ObjectIdentifier>,
+        into result: inout [String]
+    ) {
+        let key = ObjectIdentifier(currentType)
+        guard !visited.contains(key) else { return }
+        visited.insert(key)
+
+        if findRecipeUpwards(for: key) == nil, let injectable = currentType as? any Injectable.Type {
+            injectable.register(in: self)
+        }
+
+        guard let (_, recipe) = findRecipeUpwards(for: key) else {
+            if currentType is any Precondition.Type {
+                let name = String(reflecting: currentType)
+                if !result.contains(name) { result.append(name) }
+            }
+            return
+        }
+
+        if case .precondition = recipe.lifetime {
+            if !result.contains(recipe.typeName) {
+                result.append(recipe.typeName)
+            }
+        } else if currentType is any Precondition.Type {
+            if !result.contains(recipe.typeName) {
+                result.append(recipe.typeName)
+            }
+        }
+
+        for depType in recipe.dependencyTypes {
+            collectPreconditions(forAny: depType, visited: &visited, into: &result)
+        }
+    }
+
+    private func collectBusinessRules(
+        forAny currentType: Any.Type,
+        visited: inout Set<ObjectIdentifier>,
+        into result: inout [String]
+    ) {
+        let key = ObjectIdentifier(currentType)
+        guard !visited.contains(key) else { return }
+        visited.insert(key)
+
+        if findRecipeUpwards(for: key) == nil, let injectable = currentType as? any Injectable.Type {
+            injectable.register(in: self)
+        }
+
+        guard let (_, recipe) = findRecipeUpwards(for: key) else { return }
+
+        if case .businessRule = recipe.lifetime {
+            if !result.contains(recipe.typeName) {
+                result.append(recipe.typeName)
+            }
+        }
+
+        for depType in recipe.dependencyTypes {
+            collectBusinessRules(forAny: depType, visited: &visited, into: &result)
+        }
+    }
+
     private func registerRecipe<T, each D>(
         for type: T.Type,
         lifetime: NodeLifetime,
@@ -550,12 +638,15 @@ public final class ScopeContainer: @unchecked Sendable {
         let key = ObjectIdentifier(type)
         let typeName = String(reflecting: type)
         var depNames: [String] = []
+        var depTypes: [Any.Type] = []
         repeat depNames.append(String(reflecting: (each D).self))
+        repeat depTypes.append((each D).self)
 
         recipes[key] = GraphRecipe(
             typeName: typeName,
             lifetime: lifetime,
             dependencies: depNames,
+            dependencyTypes: depTypes,
             build: { resolver in
                 try factory(repeat try resolver.resolve((each D).self))
             }
