@@ -2,7 +2,8 @@
 //  FintechHomeViewModel.swift
 //  FintechMockupDemo · Presentation -> ViewModel (MVVM)
 //
-//  Usa `@Inject`: cero `init` manual y cero `rootContainer.resolve` en el inicializador.
+//  Usa únicamente el decorador `@Inject(scope: FintechScope.self)` y los `@Module`s
+//  sin referenciar `ScopeContainer`.
 //
 
 import SwiftUI
@@ -29,12 +30,10 @@ public enum FintechModulePaletteOption: String, CaseIterable, Identifiable, Send
 }
 
 @MainActor
-@Inject
+@Inject(scope: FintechScope.self)
 public final class FintechMockupViewModel: ObservableObject {
+    public let initialDashboard: GetFintechDashboardUseCase
     public let flagsRepository: any FintechABFlagsRepositoryProtocol
-    public let container: ScopeContainer
-
-    private var activeFintechScope: ScopeContainer?
 
     @Published public var selectedPalette: FintechModulePaletteOption = .v2_0
     @Published public var isWealthBentoVariantB: Bool = true
@@ -44,20 +43,21 @@ public final class FintechMockupViewModel: ObservableObject {
     @Published public var boostActivatedMessage: String? = nil
 
     public func loadInitialDashboard() {
-        guard activeFintechScope == nil else { return }
+        guard dashboard == nil else { return }
         isWealthBentoVariantB = flagsRepository.isWealthBentoVariantB
         isInstantCreditBoostVariantB = flagsRepository.isInstantCreditBoostVariantB
-        selectPalette(selectedPalette)
+        dashboard = initialDashboard
+        Task {
+            self.transactions = await initialDashboard.coreBanking.fetchRecentTransactions()
+        }
     }
 
     public func selectPalette(_ option: FintechModulePaletteOption) {
+        selectedPalette.moduleType.teardownScope()
         selectedPalette = option
         boostActivatedMessage = nil
-        activeFintechScope?.teardown()
 
-        let newScope = container.makeChildScope(for: option.moduleType)
-        activeFintechScope = newScope
-        if let updated = try? newScope.resolve(GetFintechDashboardUseCase.self) {
+        if let updated = try? option.moduleType.resolve(GetFintechDashboardUseCase.self) {
             dashboard = updated
             Task {
                 self.transactions = await updated.coreBanking.fetchRecentTransactions()
@@ -90,8 +90,7 @@ public final class FintechMockupViewModel: ObservableObject {
     }
 
     private func refreshDashboardFromGraph() {
-        guard let scope = activeFintechScope,
-              let updated = try? scope.resolve(GetFintechDashboardUseCase.self) else { return }
+        guard let updated = try? selectedPalette.moduleType.resolve(GetFintechDashboardUseCase.self) else { return }
         dashboard = updated
     }
 }

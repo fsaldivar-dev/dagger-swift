@@ -33,7 +33,7 @@ public enum FintechSharedFlagsModule {
     }
 }
 
-@Module(0.1, scope: FintechScope.self)
+@Module(0.1, scope: FintechScope.self, includes: [FintechCoreModule.self, FintechSharedFlagsModule.self])
 public enum FintechModuleV0_1 {
     @Scoped
     public static func coreBanking() -> any FintechCoreBankingProtocol {

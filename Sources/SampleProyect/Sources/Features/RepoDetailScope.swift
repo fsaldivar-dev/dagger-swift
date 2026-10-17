@@ -12,22 +12,20 @@ import DaggerSwift
 import AppFoundation
 import Core
 
-@Module
+@Module(includes: [ShowcaseCoreModule.self])
 public enum RepoDetailModule {
     @Scoped
     public static func repoDetailInspector(
         session: ValidatedSession,
-        repo: GitHubRepoItem,
         gitHubRepository: any GitHubRepositoryProtocol
     ) -> RepoDetailInspector {
-        RepoDetailInspector(session: session, repo: repo, gitHubRepository: gitHubRepository)
+        RepoDetailInspector(session: session, gitHubRepository: gitHubRepository)
     }
 }
 
 @Inject(scope: RepoDetailModule.self)
 public final class RepoDetailInspector: ScopeDisposable, Sendable {
     public let session: ValidatedSession
-    public let repo: GitHubRepoItem
     public let gitHubRepository: any GitHubRepositoryProtocol
 
     public let instanceID = "Inspector-" + String(UUID().uuidString.prefix(4))
@@ -44,13 +42,13 @@ public final class RepoDetailInspector: ScopeDisposable, Sendable {
     }
 }
 
-public struct ActiveRepoSession: Identifiable {
+public struct ActiveRepoSession: Identifiable, Sendable {
     public var id: String { inspector.instanceID }
-    public let scope: ScopeContainer
+    public let repo: GitHubRepoItem
     public let inspector: RepoDetailInspector
 
-    public init(scope: ScopeContainer, inspector: RepoDetailInspector) {
-        self.scope = scope
+    public init(repo: GitHubRepoItem, inspector: RepoDetailInspector) {
+        self.repo = repo
         self.inspector = inspector
     }
 }
