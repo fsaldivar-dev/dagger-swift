@@ -99,19 +99,64 @@ En aplicaciones reales, un módulo cambia en dos ejes:
 1. **Eje Vertical (Evolución en el tiempo):** Lanzamos un MVP en `@Module(0.1)`, evolucionamos la tarjeta en `@Module(1.0, includes: [FintechModuleV0_1.self])` reutilizando el Core Bancario sin duplicar código, y lanzamos Metal en `@Module(2.0, includes: [FintechModuleV1.self])`.
 2. **Eje Horizontal (Variantes hermanas / Multi-Country):** `MexicoNewsModule`, `USANewsModule`, `BrazilNewsModule` y `FranceNewsModule` comparten el mismo `CountryNewsScope` y contrato `CountryNewsModuleContract`, pero cada uno protege su propio país con su `@Precondition` local.
 
-### 2.3 Límites de la Librería: Ciclo de Vida de Memoria (DI) vs. Ciclo de Vida de la App (`RootComposer`)
+### 2.3 Límites de la Librería: Solo una Pieza del Rompecabezas (DI vs. App Lifecycle vs. Coordinator)
 
-Un pilar fundamental de Clean Architecture es **no confundir la gestión de objetos en memoria con la orquestación de la interfaz de usuario**:
+Un error muy extendido en el ecosistema de desarrollo móvil es asumir que una librería de inyección de dependencias debe solucionar **toda la arquitectura de la app**. Para mantener Clean Architecture estricta y alta cohesión, `DaggerSwift v2` asume con honestidad sus fronteras: **solo resuelve una pieza del rompecabezas**.
 
-1. **Lo que resuelve DaggerSwift:**
-   - La frontera de memoria RAM (`GlobalScope` -> `SessionScope` -> `FeatureScope`).
-   - El cortocircuito estricto (`@Precondition`) para **no crear objetos si el estado no es válido**.
-   - La auditoría determinística de memoria al cerrar módulos (`teardownScope()` + `WeakObjectBox`).
-2. **Lo que NO intenta resolver DaggerSwift:**
-   - No es un Router, no maneja `NavigationStack`, no presenta modales ni sabe qué pantalla mostrar.
-   - **¿Quién resuelve lo que falta?** Si una pantalla requiere `AuthenticatedSession`, el motor de DI aborta la construcción antes de tocar la red o la base de datos (`unmetPrecondition`). Pero el motor **no puede ni debe mostrar una pantalla de Login**, porque obtener una sesión requiere interacción humana (UX).
-3. **El Patrón `RootComposer`:**
-   - La máquina de estados de la UI (`RootComposer` o `AppCoordinator`) es quien atrapa el requisito faltante, monta el flujo interactivo de Login en SwiftUI/UIKit, espera a que el usuario se autentique, y finalmente alimenta el `SessionScope` en RAM para desbloquear la feature protegida.
+```text
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                   🧩 EL ROMPECABEZAS DE UNA APLICACIÓN ENTERPRISE                      │
+├────────────────────────────┬───────────────────────────────────────────────────────────┤
+│ 1. DaggerSwift v2 (DI)     │ ✅ Memoria, Grafos, Scopes (@Scoped), Contratos y @Preconditions │
+│ 2. RootComposer (Factory)  │ 🏭 Ensamblaje de Vistas + ViewModels sin Singletons               │
+│ 3. AppCoordinator (Flows)  │ 🧭 Máquina de Estados de Navegación, Modales y Deep Links         │
+│ 4. AppEventsBus (Reactive) │ 📡 AsyncStreams y Eventos Desacoplados (Login, Logout, Sync)      │
+└────────────────────────────┴───────────────────────────────────────────────────────────┘
+```
+
+#### Los 4 Fallos Comunes en la Industria (Que ocurren si no separas estas capas)
+
+1. **💥 El Crash del Deep Link Huérfano:** Un enlace externo abre directamente una pantalla privada (`app://loans/apply`). El `ViewModel` o `UseCase` asume que `session!` existe y crashea si el usuario estaba deslogueado. `@Precondition` bloquea la resolución en frío con `GraphError.unmetPrecondition` y 0 asignaciones en RAM.
+2. **🐘 El Monolito del Inyector Todopoderoso:** Forzar al inyector a guardar routers o el `UINavigationController`, acoplando la UI al motor de dependencias.
+3. **🍝 Acoplamiento Espagueti entre Pantallas:** Que la pantalla de Login tenga un switch gigante para saber a dónde redirigir al usuario según de qué pantalla vino. En nuestra arquitectura, Login solo emite `AppEvent.userAuthenticated` a través del bus reactivo.
+4. **🧟 Fuga de Estado Zombie al hacer Logout (*Captive Session Bug*):** No desmontar las pantallas viejas ni limpiar diccionarios estáticos al cerrar sesión, dejando datos privados del usuario anterior visibles al siguiente login. `DaggerSwift` lo resuelve con `teardownScope()` y auditoría de cajas débiles.
+
+#### El Flujo Canónico Completo (Diagrama de Secuencia)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant OS as Sistema / DeepLink
+    participant Coord as AppCoordinator (Navegación / Flujos)
+    participant Comp as RootComposer (Ensamblador de Pantallas)
+    participant Dagger as DaggerSwift v2 (Scopes & Preconditions)
+    participant Events as AppEventsBus (AsyncSequence / Events)
+    participant Login as LoginFlowView (Feature UI)
+    participant Loans as LoansFeatureView (Feature UI)
+
+    OS->>Coord: Abre DeepLink ("app://loans/apply")
+    Note over Coord: El Coordinator intenta navegar al flujo de Préstamos
+    Coord->>Comp: Pide ensamblar LoansFeatureView
+    Comp->>Dagger: Intenta resolver GetLoansDashboardUseCase
+    Note over Dagger: Evalúa @Precondition(AuthenticatedCountrySession)
+    Dagger-->>Comp: Cortocircuito: GraphError.unmetPrecondition(AuthenticatedCountrySession.self)
+    Comp-->>Coord: Error Explícito: .requiresPrerequisite(AuthenticatedCountrySession.self)
+
+    Note over Coord: ¡El Coordinator toma el control del flujo UI!
+    Coord->>Events: Se suscribe a AppEvent.userAuthenticated
+    Coord->>Login: Presenta modal interactivo de Login
+
+    Note over Login: Usuario ingresa credenciales o FaceID
+    Login->>Events: Emite AppEvent.userAuthenticated(session)
+
+    Note over Coord: AppCoordinator recibe el evento de éxito
+    Coord->>Login: Cierra modal de Login
+    Coord->>Dagger: Alimenta SessionScope con la nueva sesión (Plug)
+    Coord->>Comp: Reintenta ensamblar LoansFeatureView (¡Ahora sí cumple @Precondition!)
+    Comp->>Dagger: Resuelve dependencias con éxito (allocations > 0)
+    Comp-->>Coord: Devuelve LoansFeatureView lista
+    Coord->>Loans: Navega a LoansFeatureView
+```
 
 ---
 
