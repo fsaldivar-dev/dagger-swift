@@ -6,14 +6,14 @@
 //
 
 import Foundation
+import DaggerSwift
 import AppFoundation
 import Core
 
+@Inject
 public final class FakerGitHubRepository: GitHubRepositoryProtocol, Sendable {
     public let environmentTitle: String = "SANDBOX · Faker Offline"
     public let isFakerEnvironment: Bool = true
-
-    public init() {}
 
     public func fetchProfile(username: String) async throws -> GitHubUserProfile {
         .fsaldivarDefault

@@ -6,13 +6,13 @@
 //
 
 import Foundation
+import DaggerSwift
 import Core
 
+@Inject
 public final class AuthSessionRepository: AuthRepositoryProtocol, @unchecked Sendable {
     private let lock = NSLock()
-    private var session: ValidatedSession?
-
-    public init() {}
+    private var session: ValidatedSession? = nil
 
     public var isAuthenticated: Bool {
         lock.lock()
@@ -45,11 +45,10 @@ public final class AuthSessionRepository: AuthRepositoryProtocol, @unchecked Sen
     }
 }
 
+@Inject
 public final class FeatureFlagRepositoryImpl: FeatureFlagRepositoryProtocol, @unchecked Sendable {
     private let lock = NSLock()
     private var bentoV2Enabled: Bool = true
-
-    public init() {}
 
     public var isBentoV2Enabled: Bool {
         lock.lock()

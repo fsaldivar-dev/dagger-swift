@@ -10,7 +10,19 @@ import Features
 @Suite("2. Pruebas del Grafo de Dependencias")
 struct AppGraphTests {
 
-    @Test("Composición del flujo principal: todos los nodos se resuelven", .tags(.graph))
+    @Test("Inyectar Fakes al vuelo con whenResolved(...).returns(Fake.self)", .tags(.graph))
+    @MainActor
+    func testWhenResolvedReturnsFake() {
+        ShowcaseCoreModule
+            .whenResolved((any GitHubRepositoryProtocol).self).returns(FakerGitHubRepository.self)
+            .whenResolved((any AuthRepositoryProtocol).self).returns(AuthSessionRepository.self)
+            .whenResolved((any FeatureFlagRepositoryProtocol).self).returns(FeatureFlagRepositoryImpl.self)
+            .resolved(GetProfileUseCase.self)
+            .resolved(GetRepositoriesUseCase.self)
+            .resolved(FeedViewModel.self)
+    }
+
+    @Test("Composición completa con módulos: expectGraph(...).resolved(...)", .tags(.graph))
     @MainActor
     func testComposicionFlujoPrincipal() {
         expectGraph(ShowcaseCoreModule.self, FakerGitHubModule.self)
