@@ -2,10 +2,10 @@
 //  CountryNewsViewModel.swift
 //  MultiCountryNewsDemo · Presentation -> ViewModel (MVVM)
 //
-//  Plug & UnPlug + Clean Architecture:
-//  - Recibe únicamente `CountryAuthRepositoryProtocol` por `@Inject`.
-//  - Al cambiar de país, desconecta (`teardownScope()`) el módulo anterior y conecta (`plug`) el nuevo
-//    usando `CountryNewsScope.module(for:)`.
+//  Plug & UnPlug + Acceso Estricto por País:
+//  - Cada país valida su propia `@Precondition` (`activeModule.validateSession(auth:)`).
+//  - Si inicias sesión en 🇲🇽 México y cambias a 🇺🇸 USA, USA bloquea el acceso a noticias
+//    porque tu sesión pertenece a México, pidiéndote iniciar sesión en USA.
 //
 
 import SwiftUI
@@ -21,6 +21,7 @@ public final class CountryNewsPortalViewModel: ObservableObject {
     @Published public var identifierInput: String = ""
     @Published public var headlines: [NewsArticleItem] = []
     @Published public var isAuthenticated: Bool = false
+    @Published public var activeSessionCountry: SupportedCountry? = nil
 
     public func loadInitialCountry() async {
         plug(country: selectedCountry)
@@ -28,16 +29,14 @@ public final class CountryNewsPortalViewModel: ObservableObject {
     }
 
     /// Plug & UnPlug: Desconecta el scope del país anterior y conecta el `@Module` del nuevo país.
+    /// NO auto-loguea en el nuevo país: la `@Precondition` del nuevo módulo verificará si la sesión
+    /// actual realmente pertenece a ese país.
     public func selectCountry(_ country: SupportedCountry) {
         let previousModule = CountryNewsScope.module(for: selectedCountry)
         previousModule.teardownScope()
 
         selectedCountry = country
         plug(country: country)
-
-        if authRepository.currentSession != nil {
-            authRepository.login(identifier: identifierInput, country: country)
-        }
         Task { await refreshState() }
     }
 
@@ -50,7 +49,10 @@ public final class CountryNewsPortalViewModel: ObservableObject {
     }
 
     public func logout() {
+        let activeModule = CountryNewsScope.module(for: selectedCountry)
+        activeModule.teardownScope()
         authRepository.logout()
+        activeSessionCountry = nil
         isAuthenticated = false
         headlines = []
     }
@@ -63,12 +65,13 @@ public final class CountryNewsPortalViewModel: ObservableObject {
     }
 
     private func refreshState() async {
-        guard let session = CountryNewsCoreModule.validateCountrySession(auth: authRepository) else {
+        activeSessionCountry = authRepository.currentSession?.country
+        let activeModule = CountryNewsScope.module(for: selectedCountry)
+        guard let session = activeModule.validateSession(auth: authRepository) else {
             isAuthenticated = false
             headlines = []
             return
         }
-        let activeModule = CountryNewsScope.module(for: selectedCountry)
         let useCase = activeModule.makeNewsUseCase(session: session)
         isAuthenticated = true
         headlines = await useCase.execute()

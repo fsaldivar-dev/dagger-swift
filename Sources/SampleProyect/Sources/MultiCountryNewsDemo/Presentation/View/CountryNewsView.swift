@@ -71,6 +71,18 @@ public struct CountryNewsFeatureView: View {
 
     private var loginCardSection: some View {
         VStack(alignment: .leading, spacing: 14) {
+            if let loggedCountry = viewModel.activeSessionCountry, loggedCountry != viewModel.selectedCountry {
+                Label(
+                    "Tu sesión activa pertenece a \(loggedCountry.flagEmoji) \(loggedCountry.displayName). `@Precondition` bloqueó \(viewModel.selectedCountry.flagEmoji) \(viewModel.selectedCountry.displayName).",
+                    systemImage: "lock.shield.fill"
+                )
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.orange)
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 10).fill(Color.orange.opacity(0.12)))
+            }
+
             Text(viewModel.currentCopy.loginTitle)
                 .font(.title2.weight(.bold))
             Text(viewModel.currentCopy.loginSubtitle)

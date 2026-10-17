@@ -191,10 +191,10 @@ struct ArchitectureLinterTests {
             // =========================================================================
             for (idx, rawLine) in file.codeLinesWithoutComments.enumerated() {
                 let lineNum = idx + 1
-                if rawLine.contains("try!") {
+                if rawLine.range(of: #"\btry!"#, options: .regularExpression) != nil {
                     violations.append("[RULE-06 · Safety] \(path):\(lineNum) Uso prohibido de `try!`.")
                 }
-                if rawLine.contains("try?") {
+                if rawLine.range(of: #"\btry\?"#, options: .regularExpression) != nil {
                     violations.append("[RULE-06 · Safety] \(path):\(lineNum) Uso prohibido de `try?`.")
                 }
                 if rawLine.contains("ScopeContainer") && !rawLine.contains("\"Sources/DaggerSwift/ScopeContainer.swift\"") {
