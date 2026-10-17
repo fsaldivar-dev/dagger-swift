@@ -1,272 +1,157 @@
-# dagger-swift
+# DaggerSwift v2 (`dagger-swift`)
 
-Motor de resolución de **Grafo de Dependencias (DAG)** y **Scopes Jerárquicos** para Swift 6 y SwiftUI.
+![Dagger 2 SwiftUI Dependency Injection Framework](./Assets/dagger2-hero.png)
 
-Inspirado en [Dagger (Android)](https://dagger.dev), evolucionado en **v2** para resolver no solo dependencias técnicas de Dominio, sino también **Reglas de Negocio (Feature Flags para migraciones progresivas `A -> B`)**, **Precondiciones de Estado (como `Sesión Validada` en Deep Links)** y **ciclos de vida de memoria por Módulo (`Scopes`)** que mueren automáticamente al cerrar un flujo en SwiftUI.
+Motor híbrido de **Resolución Explícita en Tiempo de Compilación (`@Module`, `@Scope`, `@Inject`)** y **Grafo Jerárquico de Dependencias (`@BusinessRule`, `@Precondition`, `teardownScope()`)** para Swift 6 y SwiftUI.
 
----
-
-## Por qué
-
-La mayoría de las librerías de DI en Swift (*Swinject*, *Resolver*, *Factory*) tienen tres problemas en aplicaciones grandes:
-1. **No entienden el grafo de arranque**: los *App Launchers* terminan inicializando 40 servicios al arrancar porque nadie sabe qué depende de qué.
-2. **Todo vive en un contenedor global inmortal**: las dependencias de un módulo como `Loans` o de una `Sesión` nunca se liberan de la memoria RAM cuando el usuario sale del módulo o cierra sesión.
-3. **No distinguen entre Dominio, Negocio y Precondiciones**: si entra un *Deep Link* con la app cerrada hacia un módulo que exige sesión, intentan instanciar la pantalla sin que nadie haya validado la sesión.
-
-```mermaid
-flowchart TD
-    Trigger["Petición: Resolver 'LoansViewModel'\n(Inicio normal o Deep Link en frío)"] --> Engine["Motor del Grafo (ScopeContainer)"]
-
-    Engine -->|"1. Verifica Precondiciones"| Pre{"¿Existe ValidatedSession?"}
-    Pre -->|"NO"| Abort["⛔ Detiene el grafo antes de instanciar nada\nDevuelve: GraphError.unmetPrecondition(ValidatedSession)\n(Tu Coordinator decide a dónde navegar)"]
-
-    Pre -->|"SÍ"| Biz["2. Evalúa Reglas de Negocio (@BusinessRule)\n¿FeatureFlag 'SistemaB' activo?"]
-    Biz -->|" Resuelve en cascada (Parameter Packs)"| Dom["3. Inicializa solo la Ruta Crítica:\n- ApiClient (GlobalScope)\n- SessionAccountsCache (SessionScope)\n- LoansSimulatorRepo (LoansModule Scope)"]
-    Dom --> Ready["✅ Entrega LoansViewModel listo"]
-```
+> 📘 **[Leer el Libro Completo: Resolución Explícita vs. Dinámica, Comparativa contra Otras Librerías y Benchmarks](./LIBRO_INYECCION_Y_BENCHMARKS.md)**
 
 ---
 
-## Novedades en `DaggerSwift v2`
+## 🎯 ¿Qué problema resolvemos?
 
-### 1. Auto-resolución en cascada con Swift 6 Parameter Packs (`repeat each D`)
-Ya **no necesitas escribir `ComponentImpl` manuales** pasando parámetro por parámetro, ni contaminar tus clases con `@propertyWrapper`s que estorben en los Unit Tests.
-Tus `ViewModel`, `UseCase` y `Repository` tienen constructores `init` 100% puros, y en el `GraphModule` solo pasas su `.init`:
+La mayoría de las librerías de Inyección de Dependencias en Swift (*Swinject*, *Resolver*, *Factory*, *swift-dependencies*) dejan **5 huecos críticos** en aplicaciones modulares grandes:
 
-```swift
-// Tus clases son Swift puro (CERO decoradores adentro -> Unit Tests limpios):
-final class LoansUseCase {
-    let repository: any LoansSimulatorRepository
-    let calculator: any LoanInterestCalculator
-
-    init(repository: any LoansSimulatorRepository, calculator: any LoanInterestCalculator) {
-        self.repository = repository
-        self.calculator = calculator
-    }
-}
-
-// En el módulo solo pasas LoansUseCase.init y Swift 6 deduce y resuelve todos sus parámetros:
-enum LoansModule: GraphModule {
-    static func register(in container: ScopeContainer) {
-        container.provideScoped((any LoansSimulatorRepository).self, factory: LoansSimulatorRepositoryImpl.init)
-        container.provide(LoansUseCase.init)
-        container.provide(LoansViewModel.init)
-    }
-}
-```
-
-### 2. Árbol de Scopes con destrucción automática en RAM (`Global` $\rightarrow$ `Session` $\rightarrow$ `Module`)
-Cada `GraphModule` y cada `Precondition` **genera automáticamente su propio `ScopeID`** (sin escribir `CodingKeys` ni `enum`s manuales):
-
-```mermaid
-flowchart BT
-    subgraph LoansBox ["ScopeContainer (LoansModule.scopeID)"]
-        I3["LoansSimulatorRepository\n💥 Muere automáticamente al cerrar Loans"]
-    end
-
-    subgraph SessionBox ["ScopeContainer (ValidatedSession.scopeID)"]
-        I2["SessionAccountsCache\n💥 Muere automáticamente al hacer Logout"]
-    end
-
-    subgraph GlobalBox ["ScopeContainer (GlobalScope.scopeID)"]
-        I1["ApiClient, FeatureFlags\n(Se instancian Lazy solo cuando alguien los pide)"]
-    end
-
-    LoansBox -->|"parent (strong)"| SessionBox
-    SessionBox -->|"parent (strong)"| GlobalBox
-    GlobalBox -.->|"children (weak - teardown en cascada)"| SessionBox
-    SessionBox -.->|"children (weak - teardown en cascada)"| LoansBox
-```
-
-- Cuando el usuario cierra el módulo `Loans`, `loansScope.teardown()` (o `GraphScopeView` en SwiftUI) vacía únicamente la caja de `Loans`, notifica `onScopeTeardown()` (`ScopeDisposable`) para cancelar `Task`s, y **audita con referencias `weak` (`WeakObjectBox`) que no hayan quedado *retain cycles* en memoria**.
-
-### 3. Los 3 Tipos de Nodos del Grafo
-
-| Tipo de Nodo | API en `ScopeContainer` | Qué resuelve |
-| :--- | :--- | :--- |
-| **1. Dominio** | `provideSingleton`, `provideScoped`, `provide` | Servicios técnicos, repositorios y ViewModels con ciclo de vida controlado (`Global`, `Session`, `Module` o `Transient`). |
-| **2. Negocio** | `provideBusinessRule` | Feature Flags y reglas que bifurcan el grafo entre una implementación vieja (**Sistema A**) y una nueva (**Sistema B**) en migraciones progresivas. |
-| **3. Precondición** | `providePrecondition` | Requisitos de estado (ej. `ValidatedSession`). Si no se cumplen al entrar por un Deep Link, el grafo aborta antes de crear el módulo e informa exactamente qué precondición falta. |
-
-### 4. Soporte Universal: SwiftUI, UIKit, AppKit, Actors y CLIs
-El motor [`ScopeContainer`](Sources/DaggerSwift/ScopeContainer.swift) solo depende de `Foundation` y es 100% *thread-safe* (`Sendable` mediante `NSRecursiveLock`), por lo que funciona en cualquier entorno:
-
-#### A. En SwiftUI (`GraphScopeView`)
-Monta el Scope de un módulo atado al ciclo de vida de la vista en SwiftUI sin usar `AnyView`. Cuando la vista sale de la pila de navegación, el `ScopeContainer` ejecuta `teardown()` automáticamente:
-
-```swift
-GraphScopeView(scope: LoansModule.self, parent: sessionScope) { loansContainer in
-    LoansRootView(viewModel: try loansContainer.resolve(LoansViewModel.self))
-} onBlocked: { graphError in
-    // Tu Coordinator decide qué hacer cuando falta ValidatedSession u otra precondición
-    CoordinatorRedirectView(error: graphError)
-}
-```
-
-#### B. En UIKit / AppKit / Coordinators (`autoTeardown(whenDeallocated:)`)
-En aplicaciones **UIKit** o híbridas (migrando de UIKit a SwiftUI), puedes atar la vida del `ScopeContainer` a cualquier `UIViewController`, `NSViewController` o `Coordinator`. Cuando el usuario hace *pop* del `UINavigationController` y ARC destruye el controlador, el Scope se limpia solo:
-
-```swift
-let loansScope = sessionScope.makeChildScope(for: LoansModule.self)
-let viewController = LoansViewController(viewModel: try loansScope.resolve(LoansViewModel.self))
-
-// Cuando 'viewController' haga deinit al salir de pantalla, 'loansScope' ejecuta teardown() solo:
-loansScope.autoTeardown(whenDeallocated: viewController)
-navigationController.pushViewController(viewController, animated: true)
-```
-
-#### C. En Background Actors, Extensions y CLIs
-Al no depender de `@MainActor`, cualquier `actor`, `Task.detached`, *App Extension* o ejecutable de línea de comandos puede resolver su grafo desde cualquier hilo de forma segura.
+1. **Resolución Dinámica que explota en Runtime (`try!` / `resolve()!`):** Registran closures en un diccionario global. Si alguien olvida registrar una dependencia, **el proyecto compila sin errores** y hace crash cuando el usuario abre la pantalla en producción.
+2. **Contaminación de la Capa `Domain` (`@Injected` / `@Dependency`):** Te obligan a meter *property wrappers* dentro de tus Casos de Uso y ViewModels, acoplando tu Dominio a un contenedor global.
+3. **Cero noción de `@Precondition` (Sesión por País / Deep Links):** Instancian repositorios y servicios privados antes de verificar si el usuario realmente tiene una sesión válida para ese módulo o país.
+4. **Cero Evolución Versionada (`Module(0.1) -> Module(1.0) -> Module(2.0)`):** No tienen una paleta estática (`@Scope` estilo `CodingKeys`) para evolucionar un producto reutilizando providers anteriores (`includes:`) o alternar entre variantes hermanas (`🇲🇽 MX`, `🇺🇸 US`, `🇧🇷 BR`, `🇫🇷 FR`).
+5. **Contenedores Globales Inmortales sin Auditoría de Memoria:** Las instancias quedan atrapadas en RAM aunque el usuario cierre el flujo (`Plug & UnPlug`), sin auditar *retain cycles*.
 
 ---
 
-## Swift Macros en `DaggerSwift v2` (`@Module` & `@Inject`)
+## ⚡ Lo que hacemos diferente en `DaggerSwift v2`
 
-Para eliminar el boilerplate y garantizar **cero acoplamiento** en tus clases de dominio, DaggerSwift v2 incluye un **Compiler Plugin nativo en Swift 6 (sin dependencias externas pesadas)**:
+### 1. Resolución Explícita en Tiempo de Compilación + Paleta `@Scope` (Estilo `CodingKeys`)
+
+En lugar de usar `try!` o `try?` contra un diccionario dinámico, declaras tu familia de módulos con `@Module(0.1)`, `@Module(1.0)`, `@Module(2.0)` y sintetizas la paleta con `@Scope`:
 
 ```swift
-// 1. Declaras tu módulo con funciones estáticas y anotaciones de rol:
-@Module
-public enum CoreGraphModule {
-    @Singleton
-    static func apiClient() -> any ApiClient {
-        ApiClientRealImpl()
-    }
-
-    @BusinessRule
-    static func checkoutService(flags: FeatureFlagStore, api: any ApiClient) -> any CheckoutService {
-        flags.useBentoV2 ? BentoCheckout(api: api) : LegacyCheckout(api: api)
-    }
-
-    @Precondition("Se requiere sesión activa")
-    static func session(auth: AuthStore) -> ValidatedSession? {
-        auth.currentSession
-    }
+// 1. Contrato estático en Domain (Cero try!, cero try?, verificado por el compilador):
+public protocol FintechModuleContract: GraphModule {
+    static func coreBanking() -> any FintechCoreBankingProtocol
+    static func cardEngine() -> any FintechCardEngineProtocol
 }
 
-// 2. En tus clases de negocio, usas @Inject:
-//    - Genera el `init(...)` limpio para tus Unit Tests sin necesidad de grafo ni mocks raros.
-//    - Auto-registra la clase Just-In-Time en el scope correspondiente.
-@Inject(scope: LoansModule.self)
-final class LoansRepository {
-    let api: any ApiClient
-    let session: ValidatedSession // <- Exige la precondición automáticamente antes de construir
+// 2. Evolución de Producto en Data -> DI:
+@Module(0.1, scope: FintechScope.self)
+public enum FintechModuleV0_1: FintechModuleContract {
+    @Scoped public static func coreBanking() -> any FintechCoreBankingProtocol { FintechCoreBankingImpl() }
+    @Scoped public static func cardEngine() -> any FintechCardEngineProtocol { FintechCardEngineV0_1() }
+}
+
+@Module(1.0, scope: FintechScope.self, includes: [FintechModuleV0_1.self])
+public enum FintechModuleV1: FintechModuleContract {
+    @Scoped public static func cardEngine() -> any FintechCardEngineProtocol { FintechCardEngineV1() }
+    public static func coreBanking() -> any FintechCoreBankingProtocol { FintechModuleV0_1.coreBanking() }
+}
+
+@Module(2.0, scope: FintechScope.self, includes: [FintechModuleV1.self])
+public enum FintechModuleV2: FintechModuleContract {
+    @Scoped public static func cardEngine() -> any FintechCardEngineProtocol { FintechCardEngineV2() }
+    public static func coreBanking() -> any FintechCoreBankingProtocol { FintechModuleV1.coreBanking() }
+}
+
+// 3. @Scope sintetiza automáticamente `FintechScope.Palette` (0.1, 1.0, 2.0) y `FintechScope.module(for:)`:
+@Scope(
+    of: (any FintechModuleContract).self,
+    v0_1: FintechModuleV0_1.self,
+    v1_0: FintechModuleV1.self,
+    v2_0: FintechModuleV2.self
+)
+extension FintechScope {}
+```
+
+### 2. `@Inject` Puro + Ley de Demeter en `UseCases` y `ViewModels`
+
+`@Inject` genera el `public init(...)` limpio para que tus `UseCases` y `ViewModels` no tengan dependencias ocultas ni *property wrappers*:
+
+```swift
+@Inject
+public struct GetFintechDashboardUseCase: Sendable {
+    let coreBanking: any FintechCoreBankingProtocol // Encapsulado (Ley de Demeter)
+    let cardEngine: any FintechCardEngineProtocol
+    public let layoutVariant: any FintechHomeLayoutVariantProtocol
+    public let creditOfferVariant: any FintechCreditOfferVariantProtocol
+
+    public func execute() async -> FintechDashboardSnapshot {
+        let transactions = await coreBanking.fetchRecentTransactions()
+        return FintechDashboardSnapshot(
+            account: coreBanking.fetchAccountSummary(),
+            card: cardEngine.fetchCardProduct(),
+            layoutVariant: layoutVariant,
+            creditOfferVariant: creditOfferVariant,
+            transactions: transactions
+        )
+    }
+}
+```
+
+### 3. Plug & UnPlug Real con `@Precondition` por País y `teardownScope()`
+
+Cada módulo de país valida su propia `@Precondition` (`auth.session(for: .mexico)`). Si el usuario inicia sesión en **🇲🇽 México** y cambia a **🇺🇸 USA**, la precondición de USA bloquea el acceso hasta que se autentique en ese país, y `previousModule.teardownScope()` destruye las instancias del país anterior liberando RAM:
+
+```swift
+@Module(1.0, scope: CountryNewsScope.self)
+public enum MexicoNewsModule: CountryNewsModuleContract {
+    @Precondition("Se requiere sesión activa en México (🇲🇽)")
+    public static func validateSession(auth: any CountryAuthRepositoryProtocol) -> AuthenticatedCountrySession? {
+        auth.session(for: .mexico)
+    }
+
+    @Scoped public static func localeProvider() -> any CountryLocaleProviderProtocol { MexicoLocaleProvider() }
+    @Scoped public static func newsRepository() -> any CountryNewsRepositoryProtocol { MexicoNewsRepository() }
 }
 ```
 
 ---
 
-## Herramienta CLI (`dagger-cli`)
+## 📊 Benchmarks y Comparativa contra Otras Librerías
 
-DaggerSwift incluye un ejecutable nativo para terminal que demuestra la resolución del grafo, simulación de autenticación en frío, reglas de negocio y pruebas de estrés de memoria:
+Resultados medidos en [`Test/BenchmarkComparisonTests.swift`](./Test/BenchmarkComparisonTests.swift) (**10,000 resoluciones** en Apple Silicon `arm64e-apple-macos`):
+
+| Escenario / Librería | Tiempo (10,000 iter.) | Latencia / Resolución | Seguridad en Compilación | Cortocircuito `@Precondition` | Auditoría Leaks (`WeakObjectBox`) |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **1. DaggerSwift Modo Explícito (`@Module` + `@Scope` + `@Inject`)** | **`1.74 ms`** | **`~174 ns`** | **✅ 100% Compile-Time** | **✅ Sí** | **✅ Sí** |
+| **2. Service Locator Dinámico (Swinject / Resolver style)** | `13.62 ms` | `~1.36 µs` | ❌ Falla en Runtime (`nil` / `try!`) | ❌ No existe | ❌ No existe |
+| **3. DaggerSwift Motor DAG (`ScopeContainer` + CycleCheck)** | `23.05 ms` | `~2.30 µs` | ✅ Verificado con `expectGraph` | **✅ Sí (`3.82 µs` bloqueo en frío)** | **✅ Sí (`teardown() -> [String]`)** |
+
+👉 **Lee el análisis completo de puntos fuertes, puntos débiles y los 5 huecos de otras librerías en [`LIBRO_INYECCION_Y_BENCHMARKS.md`](./LIBRO_INYECCION_Y_BENCHMARKS.md).**
+
+---
+
+## 📱 Demos Incluidas en `Sources/SampleProyect` (Clean Architecture + MVVM + SOLID)
+
+Al compilar la aplicación (`Demo` en Xcode) verás un selector interactivo con **3 aplicaciones demo reales** auditadas por nuestro Linter ([`ArchitectureLinterTests.swift`](./Sources/SampleProyect/Tests/AppGraphTests/ArchitectureLinterTests.swift)):
+
+1. **🌎 Demo 1 (`MultiCountryNewsDemo`) — Login Multi-Country + Noticias en 4 Idiomas:**
+   - Variantes hermanas **🇲🇽 Español**, **🇺🇸 English**, **🇧🇷 Português** y **🇫🇷 Français** usando actores nativos de Swift 6 (`public actor`).
+   - Acceso estricto por país mediante `@Precondition`: iniciar sesión en México solo desbloquea México; al cambiar a USA/Brasil/Francia el grafo bloquea el feed hasta autenticarse en ese país.
+2. **💳 Demo 2 (`FintechMockupDemo`) — Paleta `@Module(0.1 / 1.0 / 2.0)` + A/B Flags:**
+   - Demuestra la evolución de producto con `@Scope` (`Module(0.1)` Starter $\rightarrow$ `Module(1.0)` Clásica $\rightarrow$ `Module(2.0)` Metal) y switches en vivo de `@BusinessRule` (Layout Clásico vs. Wealth Bento + Crédito A/B).
+3. **🐙 Demo 3 (`Core` + `Services` + `Features`) — GitHub Developer Profile (`@fsaldivar-dev`):**
+   - Dividida físicamente en 3 targets SPM independientes con switch Plug & UnPlug en vivo entre `LiveGitHubModule` (`Module(1.0)`) y `LiveGitHubModuleV2` (`Module(2.0)`).
+
+---
+
+## 🧪 Ejecutar Pruebas, Benchmarks y Linter de Arquitectura
 
 ```bash
-# Ver ayuda y comandos disponibles
-swift run dagger-cli help
-
-# Consultar el perfil oficial de @fsaldivar-dev desde GitHub API
-swift run dagger-cli profile
-
-# Listar repositorios destacados del autor
-swift run dagger-cli repos
-
-# Probar el bloqueo de rutas protegidas mediante @Precondition (ValidatedSession)
-swift run dagger-cli test-auth
-
-# Probar el cambio dinámico de @BusinessRule (Sistema A vs B)
-swift run dagger-cli test-flag
-
-# Ejecutar stress-test de 25 sub-scopes con auditoría WeakObjectBox (0 Leaks)
-swift run dagger-cli stress-test
-
-# Leer el Manifiesto de Aaron Swartz, Jonas Salk y Dagger 1 -> 2
-swift run dagger-cli manifesto
-```
-
----
-
-## Retrocompatibilidad con `DaggerSwift v1`
-
-Las primitivas originales de la v1 (`Modulable`, `Component`, `@Singleton`, `@Provider`) siguen 100% disponibles y funcionando en Swift 6 mediante macros accesoras:
-
-```swift
-protocol AppModule: Modulable {
-    static var apiService: ApiService { get }
-    static var analisisRepository: AnalisiRepository { get }
-    static func provideUserRepository(apiService: ApiService) -> UserRepository
-}
-
-enum AppModuleImpl: AppModule {
-    @Provider(wrappedValue: ApiService())
-    static var apiService: ApiService
-
-    @Singleton(wrappedValue: AnalisiRepository(apiService: apiService))
-    static var analisisRepository: AnalisiRepository
-
-    static func provideUserRepository(apiService: ApiService) -> UserRepository {
-        .init(apiService: apiService)
-    }
-}
-```
-
----
-
-## Estructura del Repositorio, Clean Architecture y Linter
-
-```text
-├── Package.swift                        # Configuración SPM (Swift 6.0, macOS 14+ / iOS 17+, CLI + Macros + Testing)
-├── Sources/
-│   ├── DaggerSwift/
-│   │   ├── GraphScope.swift             # v2: ScopeID, GraphScope, GlobalScope, Precondition, GraphError
-│   │   ├── ScopeContainer.swift         # v2: Motor DAG, Árbol de Scopes, Parameter Packs y Auditor de Leaks
-│   │   ├── SwiftUIGraph.swift           # v2: GraphScopeView y ciclo de vida automático en SwiftUI
-│   │   └── Module.swift                 # Macros: @Module(0.1/1.0/2.0), @Scope (ModulePalette), @Inject, @Singleton, @Scoped, @Provider, @BusinessRule, @Precondition
-│   ├── DaggerSwiftMacros/               # Compiler Plugin nativo Swift 6 (protocolo JSON HostToPluginMessage sin dependencias)
-│   ├── DaggerSwiftTesting/              # DSL de pruebas del grafo: expectGraph, expectWhenCondition, matchesContract
-│   ├── DaggerCLI/                       # Herramienta de terminal (swift run dagger-cli)
-│   ├── SampleProyect/                   # Paquete SPM Modular con 3 Demos (Clean Architecture + MVVM + SOLID + Plug & UnPlug):
-│   │   ├── Sources/
-│   │   │   ├── AppFoundation/           # Modelos base y Design System compartido
-│   │   │   ├── MultiCountryNewsDemo/    # Demo 1: Login Multi-Country + Noticias en 4 Idiomas (MX, US, BR, FR)
-│   │   │   │   ├── Domain/              # Entities, Repository Protocols (CountryNewsModuleContract) y UseCases (@Inject)
-│   │   │   │   ├── Data/                # Actores Swift 6 por país y @Module(1.0, scope: CountryNewsScope.self)
-│   │   │   │   └── Presentation/        # MVVM: CountryNewsPortalViewModel (@Inject) + CountryNewsFeatureView
-│   │   │   ├── FintechMockupDemo/       # Demo 2: App Mockup Fintech con Paleta @Module(0.1/1.0/2.0) + @Scope + A/B Flags
-│   │   │   │   ├── Domain/              # Entities, Repository Protocols (FintechModuleContract) y GetFintechDashboardUseCase
-│   │   │   │   ├── Data/                # FintechBankingActor y @Module(0.1), @Module(1.0), @Module(2.0) + @Scope
-│   │   │   │   └── Presentation/        # MVVM: FintechMockupViewModel (@Inject) + FintechMockupFeatureView
-│   │   │   ├── Core/                    # Demo 3 (Domain): Protocolos, @Precondition ValidatedSession y UseCases (@Inject)
-│   │   │   ├── Services/                # Demo 3 (Data): LiveGitHubRepository + LiveGitHubModule (1.0) / LiveGitHubModuleV2 (2.0)
-│   │   │   ├── Features/                # Demo 3 (Presentation): FeedViewModel (@Inject), FeedView y Sub-Scope RepoDetailModule
-│   │   │   └── SampleProyect/           # ShowcaseRootView: Selector de las 3 Demos y switch Plug & UnPlug en vivo
-│   │   └── Tests/
-│   │       ├── AppUnitTests/            # Pruebas unitarias de UseCases y ViewModels con Fakes sin grafo
-│   │       └── AppGraphTests/           # Pruebas del grafo (DaggerSwiftTesting) + ArchitectureLinterTests (Linter SOLID/Clean)
-│   └── Demo/                            # Aplicación Xcode iOS / iPadOS / macOS:
-│       ├── Demo/                        # Target Live
-│       └── DemoFaker/                   # Target Sandbox Fintech A/B
-```
-
----
-
-## Ejecutar Pruebas y Linter de Arquitectura
-
-```bash
-# Ejecutar tests del motor principal DaggerSwift
+# 1. Ejecutar tests del motor principal DaggerSwift + Benchmarks comparativos (20 tests)
 swift test
 
-# Ejecutar Linter de Arquitectura/SOLID + Unit Tests + Graph Tests del SampleProyect
+# 2. Ejecutar Linter de Arquitectura/SOLID + Unit Tests + Graph Tests del SampleProyect (12 tests)
 swift test --package-path Sources/SampleProyect
 ```
 
 ---
 
-## Documentación Adicional
+## 📚 Documentación y Libros del Proyecto
 
-- 👉 **[Memoria Técnica: Limitaciones de DaggerSwift v1 y Dolores en Apps Productivas](./MEMORIA_DAGGER_V1.md)**
-- 👉 **[Manifiesto](./MANIFESTO.md)**
+- 📘 **[El Libro de DaggerSwift v2: Resolución Explícita vs. Dinámica, Comparativa y Benchmarks](./LIBRO_INYECCION_Y_BENCHMARKS.md)**
+- 📄 **[Memoria Técnica: Limitaciones de DaggerSwift v1 y Dolores en Apps Productivas](./MEMORIA_DAGGER_V1.md)**
+- 📜 **[Manifiesto](./MANIFESTO.md)**
 
 ## Licencia
 
 MIT
-
