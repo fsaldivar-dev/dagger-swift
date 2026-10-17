@@ -22,19 +22,13 @@ final class FakerGitHubRepository: GitHubRepositoryProtocol, Sendable {
     }
 }
 
+/// Módulo Fake para pruebas: hereda `authRepository()` y `featureFlags()` de `LiveGitHubModule`
+/// y SOLO reemplaza `gitHubRepository()`.
 @Module(includes: [LiveGitHubModule.self])
 enum FakerGitHubModule: GitHubServiceModuleContract {
     @Singleton
     static func gitHubRepository() -> any GitHubRepositoryProtocol {
         FakerGitHubRepository()
-    }
-
-    static func authRepository() -> any AuthRepositoryProtocol {
-        LiveGitHubModule.authRepository()
-    }
-
-    static func featureFlags() -> any FeatureFlagRepositoryProtocol {
-        LiveGitHubModule.featureFlags()
     }
 }
 

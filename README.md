@@ -68,13 +68,40 @@ flowchart TD
 
 ## 2. 🛠 Manual de Conceptos y Decoradores
 
-### 2.1 ¿Qué es un `@Module`?
+### 2.1 ¿Qué es un Módulo (`@Module`)?
 
-Un **`@Module`** es una pieza declarativa (conectada en la capa `Data / DI`) que le enseña al grafo **cómo construir las implementaciones concretas** de los protocolos de tu Dominio.
+#### Definición Conceptual y Arquitectónica
+En Clean Architecture, tus capas de **Dominio (`Domain`)** y **Presentación (`Presentation`)** solo conocen **abstracciones** (`Protocols` y `Entities`); jamás deben saber si los datos vienen de un `actor` en memoria, de `URLSession`, de `CoreData` o de un `Fake` de pruebas.
 
-Al anotar un `enum` o `struct` con `@Module`, el Compiler Plugin de DaggerSwift:
-- Hace que conforme automáticamente `GraphModule`, `GraphScope` y `Modulable`.
-- Registra todas sus funciones estáticas según su decorador de ciclo de vida:
+Un **Módulo (`@Module`)** en `DaggerSwift v2` es una **unidad autocontenida de ensamblaje, versión y ciclo de vida de memoria** que vive en la capa `Data / DI` y cumple **3 funciones**:
+
+1. **Recetario Perezoso de Dependencias (*Lazy Factory*):** Declara qué clase o `actor` concreto satisface cada protocolo del Dominio. Registrar un `@Module` tiene **costo cero de memoria al arrancar la app**: no instancia ningún objeto hasta el instante en que un `UseCase` o `ViewModel` lo solicita.
+2. **Frontera de Memoria (`GraphScope`):** Todo `@Module` es automáticamente un `GraphScope` con su propio identificador único en tiempo de compilación (`ScopeID`). Los objetos marcados con `@Scoped` dentro de ese módulo nacen cuando el módulo se activa y **se destruyen automáticamente de la memoria RAM** cuando el módulo se desconecta con `teardownScope()`.
+3. **Pieza Conectable y Desconectable (*Plug & UnPlug*):** Como un bloque de LEGO, puedes conectar (`Plug`) un módulo completo o desconectarlo (`UnPlug`) para cambiar de país, de versión (`0.1 -> 1.0 -> 2.0`) o de entorno (`Live -> Fake`) sin tocar una sola línea de tus `UseCases`, `ViewModels` o `Views`.
+
+```mermaid
+flowchart LR
+    subgraph Domain ["Capa Domain (Contratos)"]
+        P1["protocol FintechCoreBankingProtocol"]
+        P2["protocol FintechCardEngineProtocol"]
+    end
+
+    subgraph ModuleBox ["📦 @Module(1.0, scope: FintechScope.self)"]
+        M1["1. Recetario Lazy (@Scoped / @Singleton)"]
+        M2["2. Caja de Memoria Propia (ScopeID)"]
+        M3["3. Metadato de Versión (moduleVersion = '1.0')"]
+    end
+
+    subgraph Data ["Capa Data (Implementaciones)"]
+        I1["actor FintechBankingActor"]
+        I2["struct FintechCardEngineV1"]
+    end
+
+    Data -->|"Se registran en"| ModuleBox
+    ModuleBox -->|"Satisface sin acoplar"| Domain
+```
+
+#### ¿Qué decoradores puedes usar dentro de un `@Module`?
 
 | Decorador dentro de `@Module` | Ciclo de Vida | Cuándo se instancia | Cuándo muere en RAM |
 | :--- | :--- | :--- | :--- |
@@ -85,118 +112,177 @@ Al anotar un `enum` o `struct` con `@Module`, el Compiler Plugin de DaggerSwift:
 | **`@BusinessRule`** | Dinámico por evaluación | Se re-evalúa al consultar la regla/flag | No se cachea; entrega la variante activa al momento. |
 | **`@Precondition("Razón")`** | Candado de Sub-Grafo | Se evalúa **antes** que cualquier nodo que dependa de ella | Si devuelve `nil`, aborta la resolución con `unmetPrecondition`. |
 
-#### Ejemplo de un `@Module` completo:
+#### ¿Qué genera el macro `@Module` por debajo?
+
+Cuando escribes un módulo declarativo:
 
 ```swift
-import DaggerSwift
-
 @Module(1.0, scope: CountryNewsScope.self)
 public enum MexicoNewsModule: CountryNewsModuleContract {
-    // 1. Candado de seguridad: exige sesión activa específicamente en México
     @Precondition("Se requiere sesión activa en México (🇲🇽)")
-    public static func validateSession(
-        auth: any CountryAuthRepositoryProtocol
-    ) -> AuthenticatedCountrySession? {
+    public static func validateSession(auth: any CountryAuthRepositoryProtocol) -> AuthenticatedCountrySession? {
         auth.session(for: .mexico)
     }
 
-    // 2. Dependencias atadas a la vida del módulo (mueren al cambiar de país)
     @Scoped
-    public static func localeProvider() -> any CountryLocaleProviderProtocol {
-        MexicoLocaleProvider()
-    }
+    public static func localeProvider() -> any CountryLocaleProviderProtocol { MexicoLocaleProvider() }
 
     @Scoped
-    public static func newsRepository() -> any CountryNewsRepositoryProtocol {
-        MexicoNewsRepository() // Swift 6 native `actor`
+    public static func newsRepository() -> any CountryNewsRepositoryProtocol { MexicoNewsRepository() }
+}
+```
+
+El Compiler Plugin de `DaggerSwift` expande automáticamente la conformidad a `GraphScope`, `GraphModule` y `Modulable`, generando el registro tipado en el grafo:
+
+```swift
+// Generado automáticamente en tiempo de compilación:
+extension MexicoNewsModule: DaggerSwift.GraphScope, DaggerSwift.GraphModule, DaggerSwift.Modulable {
+    nonisolated public static let moduleVersion: String = "1.0"
+
+    nonisolated public static func register(in container: DaggerSwift.ScopeContainer) {
+        container.addCompatibleScope(CountryNewsScope.self)
+        container.providePrecondition(AuthenticatedCountrySession.self, reasonIfUnmet: "Se requiere sesión activa en México (🇲🇽)") { (auth: any CountryAuthRepositoryProtocol) in
+            Self.validateSession(auth: auth)
+        }
+        container.provideScoped(in: CountryNewsScope.self, (any CountryLocaleProviderProtocol).self) {
+            Self.localeProvider()
+        }
+        container.provideScoped(in: CountryNewsScope.self, (any CountryNewsRepositoryProtocol).self) {
+            Self.newsRepository()
+        }
     }
 }
 ```
 
 ---
 
-### 2.2 ¿Qué es una Variante y cómo se modela? (3 Tipos de Variantes)
+### 2.2 ¿Qué es una Variante y cómo se modela? (Los 3 Tipos de Variantes)
 
-En productos reales existen **3 tipos de variantes** y `DaggerSwift v2` tiene soporte nativo para las tres:
+#### ¿Qué es una Variante?
+Una **Variante** es una configuración alternativa de un mismo flujo o capacidad del producto que **cumple exactamente el mismo contrato de Dominio**, permitiendo que la aplicación cambie sus implementaciones sin que el `UseCase`, el `ViewModel` ni la `View` se enteren.
+
+En aplicaciones reales existen **3 dimensiones de variación**, y cada una se modela de forma distinta en `DaggerSwift v2`:
+
+| Tipo de Variante | Caso de Uso Real | ¿Hereda código de otra variante? | Mecanismo en `DaggerSwift v2` |
+| :--- | :--- | :--- | :--- |
+| **1. Variante Horizontal (Hermana)** | Multi-Country (`🇲🇽 MX`, `🇺🇸 US`, `🇧🇷 BR`, `🇫🇷 FR`) | **No.** Cada país provee sus propias implementaciones independientes bajo el mismo contrato. | `@Module(1.0, scope: SharedScope.self)` + `ModuleContract` |
+| **2. Variante Vertical (Evolución `0.1 -> 1.0 -> 2.0` o `Fake`)** | Evolución de un producto en el tiempo o reemplazo parcial en Tests | **Sí.** Conserva todos los proveedores del módulo base y **solo declara la función que cambió**. | `@Module(2.0, includes: [BaseModule.self])` + `@Scope` Palette |
+| **3. Variante Dinámica A/B (`@BusinessRule`)** | Feature Flags y Experimentos A/B en tiempo real | Conmuta en caliente entre Variante A y Variante B según el estado de un Flag. | `@BusinessRule` dentro del `@Module` |
 
 ```mermaid
-flowchart LR
-    subgraph V_Hor ["1. Variantes Horizontales (Hermanas)"]
-        direction TB
-        H_Scope["@Module(1.0, scope: CountryNewsScope.self)"]
-        H_Scope --> MX["🇲🇽 MexicoNewsModule"]
-        H_Scope --> US["🇺🇸 USANewsModule"]
-        H_Scope --> BR["🇧🇷 BrazilNewsModule"]
-        H_Scope --> FR["🇫🇷 FranceNewsModule"]
+flowchart TB
+    subgraph V_Hor ["1. Variantes Horizontales (Hermanas: Cero Herencia, Mismo Contrato)"]
+        direction LR
+        ContractH["CountryNewsModuleContract\n(validateSession + localeProvider + newsRepository)"]
+        ContractH --> MX["🇲🇽 MexicoNewsModule\n(Implementa las 3 para MX)"]
+        ContractH --> US["🇺🇸 USANewsModule\n(Implementa las 3 para US)"]
+        ContractH --> BR["🇧🇷 BrazilNewsModule\n(Implementa las 3 para BR)"]
+        ContractH --> FR["🇫🇷 FranceNewsModule\n(Implementa las 3 para FR)"]
     end
 
-    subgraph V_Ver ["2. Variantes Verticales (Evolución)"]
-        direction TB
-        V01["@Module(0.1)\nFintechModuleV0_1\n(MVP Starter)"] -->|"includes:"| V10["@Module(1.0)\nFintechModuleV1\n(Tarjeta Clásica)"]
-        V10 -->|"includes:"| V20["@Module(2.0)\nFintechModuleV2\n(Tarjeta Metal V2)"]
-    end
-
-    subgraph V_AB ["3. Variantes A/B (@BusinessRule)"]
-        direction TB
-        AB["@BusinessRule\nprovideHomeLayoutVariant(flags:)"]
-        AB -->|"Flag = false"| A["Variante A: Clásica"]
-        AB -->|"Flag = true"| B["Variante B: Wealth Bento"]
+    subgraph V_Ver ["2. Variantes Verticales (Evolución con Herencia Real: Solo escribes lo que cambia)"]
+        direction LR
+        V01["@Module(0.1) FintechModuleV0_1\n✅ Implementa coreBanking()\n✅ Implementa cardEngine() (V0.1)"]
+        V10["@Module(1.0, includes: [V0_1])\nFintechModuleV1\n🔹 Hereda coreBanking()\n✏️ SOLO implementa cardEngine() (V1.0)"]
+        V20["@Module(2.0, includes: [V1])\nFintechModuleV2\n🔹 Hereda coreBanking()\n✏️ SOLO implementa cardEngine() (Metal V2)"]
+        V01 -->|"Hereda"| V10 -->|"Hereda"| V20
     end
 ```
 
-#### Tipo A: Variantes Horizontales (Variantes Hermanas / Multi-Country)
-Cuando tienes el mismo producto operando en distintos países (**🇲🇽 México**, **🇺🇸 USA**, **🇧🇷 Brasil**, **🇫🇷 Francia**):
-1. Creas un `GraphScope` y un contrato compartido en `Domain`:
-   ```swift
-   public enum CountryNewsScope: GraphScope {}
+---
 
-   public protocol CountryNewsModuleContract: GraphModule {
-       static func validateSession(auth: any CountryAuthRepositoryProtocol) -> AuthenticatedCountrySession?
-       static func localeProvider() -> any CountryLocaleProviderProtocol
-       static func newsRepository() -> any CountryNewsRepositoryProtocol
-   }
-   ```
-2. Cada país implementa su propio `@Module(1.0, scope: CountryNewsScope.self)` conformando `CountryNewsModuleContract`.
-3. Tus `UseCases` y `ViewModels` solo se atan a `@Inject(scope: CountryNewsScope.self)` — **jamás conocen a `MexicoNewsModule` ni a `FranceNewsModule`**.
+#### Detalle 1: Variantes Horizontales (Variantes Hermanas / Multi-Country)
+Cuando lanzas la misma Feature en **México, USA, Brasil y Francia**, ninguna variante es "hija" de otra: México no hereda las noticias ni la sesión de USA. Son **módulos hermanos** que viven al mismo nivel jerárquico:
 
-#### Tipo B: Variantes Verticales (Evolución de Producto `0.1 -> 1.0 -> 2.0` con `@Scope`)
-Cuando un producto evoluciona de un MVP (`0.1`) a `1.0` y luego a `2.0`:
-1. Usas `includes: [VersionAnterior.self]` para **heredar** todos los servicios que no cambiaron (por ejemplo, el Core Bancario) y **sobrescribir únicamente** lo que evolucionó (por ejemplo, el motor de tarjetas):
-   ```swift
-   @Module(0.1, scope: FintechScope.self)
-   public enum FintechModuleV0_1: FintechModuleContract {
-       @Scoped public static func coreBanking() -> any FintechCoreBankingProtocol { FintechCoreBankingImpl() }
-       @Scoped public static func cardEngine() -> any FintechCardEngineProtocol { FintechCardEngineV0_1() }
-   }
+1. Comparten el mismo `scope: CountryNewsScope.self` para que el `GetLocalizedNewsFeedUseCase` (`@Inject(scope: CountryNewsScope.self)`) funcione con cualquiera de ellos.
+2. Conforman el mismo contrato `CountryNewsModuleContract`, por lo que el compilador te garantiza que ningún país quede incompleto.
+3. Al cambiar de país en la UI (`CountryNewsScope.module(for: country)`), haces `previousModule.teardownScope()` (*UnPlug*) y conectas el nuevo país (*Plug*).
 
-   @Module(1.0, scope: FintechScope.self, includes: [FintechModuleV0_1.self])
-   public enum FintechModuleV1: FintechModuleContract {
-       @Scoped public static func cardEngine() -> any FintechCardEngineProtocol { FintechCardEngineV1() }
-       public static func coreBanking() -> any FintechCoreBankingProtocol { FintechModuleV0_1.coreBanking() }
-   }
+---
 
-   @Module(2.0, scope: FintechScope.self, includes: [FintechModuleV1.self])
-   public enum FintechModuleV2: FintechModuleContract {
-       @Scoped public static func cardEngine() -> any FintechCardEngineProtocol { FintechCardEngineV2() }
-       public static func coreBanking() -> any FintechCoreBankingProtocol { FintechModuleV1.coreBanking() }
-   }
-   ```
-2. Usas el macro **`@Scope`** (integrado en la librería al estilo `CodingKeys`) para que `DaggerSwift` sintetice automáticamente el enumerador `Palette` (`ModulePalette`: `.v0_1`, `.v1_0`, `.v2_0`) y el selector estático en tiempo de compilación:
-   ```swift
-   @Scope(
-       of: (any FintechModuleContract).self,
-       v0_1: FintechModuleV0_1.self,
-       v1_0: FintechModuleV1.self,
-       v2_0: FintechModuleV2.self
-   )
-   extension FintechScope {}
+#### Detalle 2: Variantes Verticales (Evolución `0.1 -> 1.0 -> 2.0` con Herencia Real — *Solo implementas lo que cambia*)
 
-   // Uso en cualquier parte sin escribir switches manuales:
-   let activeModule = FintechScope.module(for: .v2_0) // Devuelve FintechModuleV2.self
-   ```
+Cuando un producto evoluciona de la versión `0.1` a la `1.0` y luego a la `2.0` (o cuando creas un módulo `Fake` para pruebas), **no quieres volver a escribir los proveedores que no cambiaron**.
 
-#### Tipo C: Variantes Dinámicas / Experimentos A/B (`@BusinessRule`)
-Cuando dentro de una misma versión quieres conmutar en vivo entre dos diseños o algoritmos mediante Feature Flags:
+En `DaggerSwift v2`, al usar **`includes: [ModuloAnterior.self]`** junto con el contrato base:
+- En el **Módulo Base (`0.1`)** implementas todos los proveedores iniciales (`coreBanking()` y `cardEngine()`).
+- En los **Módulos Evolucionados (`1.0` y `2.0`)** **SOLO escribes la función que evolucionó** (`cardEngine()`). Todo lo demás (`coreBanking()`) se hereda automáticamente sin re-escribirlo:
+
+```swift
+// 1. Contrato en Domain:
+public protocol FintechModuleContract: GraphModule {
+    static func coreBanking() -> any FintechCoreBankingProtocol
+    static func cardEngine() -> any FintechCardEngineProtocol
+}
+
+// 2. Módulo Base 0.1 (MVP): Implementa todos los proveedores base
+@Module(0.1, scope: FintechScope.self)
+public enum FintechModuleV0_1: FintechModuleContract {
+    @Scoped
+    public static func coreBanking() -> any FintechCoreBankingProtocol {
+        FintechCoreBankingImpl()
+    }
+
+    @Scoped
+    public static func cardEngine() -> any FintechCardEngineProtocol {
+        FintechCardEngineV0_1()
+    }
+}
+
+// Default del contrato hacia la base 0.1 para herencia estática en compile-time:
+public extension FintechModuleContract {
+    static func coreBanking() -> any FintechCoreBankingProtocol {
+        FintechModuleV0_1.coreBanking()
+    }
+}
+
+// 3. Evolución 1.0: Hereda `coreBanking()` de V0_1 y SOLO implementa `cardEngine()`
+@Module(1.0, scope: FintechScope.self, includes: [FintechModuleV0_1.self])
+public enum FintechModuleV1: FintechModuleContract {
+    @Scoped
+    public static func cardEngine() -> any FintechCardEngineProtocol {
+        FintechCardEngineV1()
+    }
+}
+
+// 4. Evolución 2.0: Hereda `coreBanking()` y SOLO implementa `cardEngine()` (Metal V2)
+@Module(2.0, scope: FintechScope.self, includes: [FintechModuleV1.self])
+public enum FintechModuleV2: FintechModuleContract {
+    @Scoped
+    public static func cardEngine() -> any FintechCardEngineProtocol {
+        FintechCardEngineV2()
+    }
+}
+```
+
+Lo mismo ocurre en [`ServiceModules.swift`](./Sources/SampleProyect/Sources/Services/ServiceModules.swift) y en [`AppUnitTests.swift`](./Sources/SampleProyect/Tests/AppUnitTests/AppUnitTests.swift):
+- `LiveGitHubModule` (`1.0`) provee `gitHubRepository()`, `authRepository()` y `featureFlags()`.
+- `LiveGitHubModuleV2` (`@Module(2.0, includes: [LiveGitHubModule.self])`) **solo implementa `authRepository()`** (OAuth V2) y hereda automáticamente `gitHubRepository()` y `featureFlags()`.
+- `FakerGitHubModule` (`@Module(includes: [LiveGitHubModule.self])`) en los tests **solo implementa `gitHubRepository()`** (con datos Fake) y hereda el resto del módulo de producción.
+
+##### Paleta `@Scope` (Estilo `CodingKeys` para Evolución `0.1 / 1.0 / 2.0`):
+Para no escribir `enum`s ni `switch` manuales al cambiar entre versiones `0.1`, `1.0` y `2.0`, el macro **`@Scope`** genera en tiempo de compilación el tipo `FintechScope.Palette` (`ModulePalette`) y el método estático `FintechScope.module(for:)`:
+
+```swift
+@Scope(
+    of: (any FintechModuleContract).self,
+    v0_1: FintechModuleV0_1.self,
+    v1_0: FintechModuleV1.self,
+    v2_0: FintechModuleV2.self
+)
+extension FintechScope {}
+
+// Selecciona en tiempo de compilación la versión de la paleta (.v0_1, .v1_0 o .v2_0):
+let module = FintechScope.module(for: .v2_0)
+```
+
+---
+
+#### Detalle 3: Variantes Dinámicas / Experimentos A/B (`@BusinessRule`)
+Cuando la variante no depende del país ni de la versión del módulo, sino de un **Feature Flag o Experimento A/B en tiempo real**, declaras un nodo `@BusinessRule`.
+
+El grafo inyecta automáticamente el repositorio de banderas (`FintechABFlagsRepositoryProtocol`) en la función `@BusinessRule` y evalúa qué variante entregar sin ensuciar el `UseCase` ni el `ViewModel` con `if/else` de banderas:
+
 ```swift
 @Module(1.0)
 public enum FintechCoreModule {
@@ -205,6 +291,13 @@ public enum FintechCoreModule {
         flags: any FintechABFlagsRepositoryProtocol
     ) -> any FintechHomeLayoutVariantProtocol {
         flags.isWealthBentoVariantB ? WealthBentoLayoutVariant() : ClassicBalanceLayoutVariant()
+    }
+
+    @BusinessRule
+    public static func provideCreditOfferVariant(
+        flags: any FintechABFlagsRepositoryProtocol
+    ) -> any FintechCreditOfferVariantProtocol {
+        flags.isInstantCreditBoostVariantB ? InstantBoostCreditOfferVariant() : StandardCreditOfferVariant()
     }
 }
 ```
