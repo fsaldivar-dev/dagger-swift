@@ -3,20 +3,14 @@
 //  MultiCountryNewsDemo · Data -> DI
 //
 //  Módulos Plug & UnPlug por País (`@Module(1.0, scope: CountryNewsScope.self)`).
+//  Cada módulo tiene su propia `@Precondition` validando que la sesión activa pertenezca a ESE país.
 //
 
 import Foundation
 import DaggerSwift
 
 @Module(1.0)
-public enum CountryNewsCoreModule {
-    @Precondition("Inicia sesión para acceder a las noticias del país seleccionado")
-    public static func validateCountrySession(
-        auth: any CountryAuthRepositoryProtocol
-    ) -> AuthenticatedCountrySession? {
-        auth.currentSession
-    }
-}
+public enum CountryNewsCoreModule {}
 
 @Module(1.0)
 public enum CountryAuthServiceModule {
@@ -28,6 +22,11 @@ public enum CountryAuthServiceModule {
 
 @Module(1.0, scope: CountryNewsScope.self)
 public enum MexicoNewsModule: CountryNewsModuleContract {
+    @Precondition("Se requiere sesión activa en México (🇲🇽)")
+    public static func validateSession(auth: any CountryAuthRepositoryProtocol) -> AuthenticatedCountrySession? {
+        auth.session(for: .mexico)
+    }
+
     @Scoped
     public static func localeProvider() -> any CountryLocaleProviderProtocol { MexicoLocaleProvider() }
 
@@ -37,6 +36,11 @@ public enum MexicoNewsModule: CountryNewsModuleContract {
 
 @Module(1.0, scope: CountryNewsScope.self)
 public enum USANewsModule: CountryNewsModuleContract {
+    @Precondition("Active US (🇺🇸) session required")
+    public static func validateSession(auth: any CountryAuthRepositoryProtocol) -> AuthenticatedCountrySession? {
+        auth.session(for: .usa)
+    }
+
     @Scoped
     public static func localeProvider() -> any CountryLocaleProviderProtocol { USALocaleProvider() }
 
@@ -46,6 +50,11 @@ public enum USANewsModule: CountryNewsModuleContract {
 
 @Module(1.0, scope: CountryNewsScope.self)
 public enum BrazilNewsModule: CountryNewsModuleContract {
+    @Precondition("Sessão ativa no Brasil (🇧🇷) necessária")
+    public static func validateSession(auth: any CountryAuthRepositoryProtocol) -> AuthenticatedCountrySession? {
+        auth.session(for: .brazil)
+    }
+
     @Scoped
     public static func localeProvider() -> any CountryLocaleProviderProtocol { BrazilLocaleProvider() }
 
@@ -55,6 +64,11 @@ public enum BrazilNewsModule: CountryNewsModuleContract {
 
 @Module(1.0, scope: CountryNewsScope.self)
 public enum FranceNewsModule: CountryNewsModuleContract {
+    @Precondition("Session active en France (🇫🇷) requise")
+    public static func validateSession(auth: any CountryAuthRepositoryProtocol) -> AuthenticatedCountrySession? {
+        auth.session(for: .france)
+    }
+
     @Scoped
     public static func localeProvider() -> any CountryLocaleProviderProtocol { FranceLocaleProvider() }
 

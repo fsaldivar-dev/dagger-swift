@@ -104,9 +104,10 @@ struct AppGraphTests {
 
     // MARK: - Demo 1: Target `MultiCountryNewsDemo` (MX, US, BR, FR)
 
-    @Test("Demo 1 (MultiCountryNewsDemo): Bloquea noticias sin login y resuelve en ES, EN, PT y FR tras autenticar", .tags(.precondition, .graph))
+    @Test("Demo 1 (MultiCountryNewsDemo): Acceso estricto por país (@Precondition bloquea otros países hasta iniciar sesión en ellos)", .tags(.precondition, .graph))
     func testDemo1MultiCountryLoginYNoticiasMultiIdioma() {
-        expectGraph(CountryNewsCoreModule.self, CountryAuthServiceModule.self, MexicoNewsModule.self)
+        // 1. Sin sesión se bloquea México; al loguearse en México se desbloquea México
+        expectGraph(CountryAuthServiceModule.self, MexicoNewsModule.self)
             .dependency(GetLocalizedNewsFeedUseCase.self).preconditionFailure()
             .when { (auth: any CountryAuthRepositoryProtocol) in
                 auth.login(identifier: "+52 55 8421 0900", country: .mexico)
@@ -115,21 +116,27 @@ struct AppGraphTests {
                 $0.copy.languageCode == "es-MX" && $0.copy.breakingTag == "ÚLTIMA HORA"
             }
 
-        expectWhenCondition(CountryNewsCoreModule.self, CountryAuthServiceModule.self, USANewsModule.self) { (auth: any CountryAuthRepositoryProtocol) in
-            auth.login(identifier: "+1 415 890 4210", country: .usa)
-        }
-        .matchesContract(of: MexicoNewsModule.self)
-        .dependency(GetLocalizedNewsFeedUseCase.self).resolved {
-            $0.copy.languageCode == "en-US" && $0.copy.breakingTag == "BREAKING NEWS"
-        }
+        // 2. Aunque el usuario se loguee en México, USA sigue BLOQUEADO por @Precondition hasta que inicie sesión en USA
+        expectGraph(CountryAuthServiceModule.self, USANewsModule.self)
+            .when { (auth: any CountryAuthRepositoryProtocol) in
+                auth.login(identifier: "+52 55 8421 0900", country: .mexico)
+            }
+            .dependency(GetLocalizedNewsFeedUseCase.self).preconditionFailure()
+            .when { (auth: any CountryAuthRepositoryProtocol) in
+                auth.login(identifier: "+1 415 890 4210", country: .usa)
+            }
+            .matchesContract(of: MexicoNewsModule.self)
+            .dependency(GetLocalizedNewsFeedUseCase.self).resolved {
+                $0.copy.languageCode == "en-US" && $0.copy.breakingTag == "BREAKING NEWS"
+            }
 
-        expectWhenCondition(CountryNewsCoreModule.self, CountryAuthServiceModule.self, BrazilNewsModule.self) { (auth: any CountryAuthRepositoryProtocol) in
+        expectWhenCondition(CountryAuthServiceModule.self, BrazilNewsModule.self) { (auth: any CountryAuthRepositoryProtocol) in
             auth.login(identifier: "CPF 391.820.118-09", country: .brazil)
         }
         .matchesContract(of: MexicoNewsModule.self)
         .dependency(GetLocalizedNewsFeedUseCase.self).resolved { $0.copy.languageCode == "pt-BR" }
 
-        expectWhenCondition(CountryNewsCoreModule.self, CountryAuthServiceModule.self, FranceNewsModule.self) { (auth: any CountryAuthRepositoryProtocol) in
+        expectWhenCondition(CountryAuthServiceModule.self, FranceNewsModule.self) { (auth: any CountryAuthRepositoryProtocol) in
             auth.login(identifier: "+33 6 42 88 19 00", country: .france)
         }
         .matchesContract(of: MexicoNewsModule.self)
