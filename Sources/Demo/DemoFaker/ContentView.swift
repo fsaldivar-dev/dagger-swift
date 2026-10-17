@@ -2,7 +2,7 @@
 //  ContentView.swift
 //  DemoFaker
 //
-//  Clean Architecture + MVVM + DaggerSwift v2 Sandbox Showcase
+//  Clean Architecture + MVVM + DaggerSwift v2 Showcase
 //
 
 import SwiftUI
@@ -11,7 +11,7 @@ import SampleProyect
 
 struct ContentView: View {
     var body: some View {
-        ShowcaseRootView(environment: FakerGitHubModule.self)
+        ShowcaseRootView(initialTab: .fintechAB)
     }
 }
 

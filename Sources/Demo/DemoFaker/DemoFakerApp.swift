@@ -3,7 +3,7 @@
 //  DemoFaker
 //
 //  Created by Saldivar on 21/10/24.
-//  Updated to DaggerSwift v2 Declarative Showcase (Faker Offline Deterministic Sandbox).
+//  Updated to DaggerSwift v2 Declarative Showcase (Fintech A/B & Multi-Country Demos).
 //
 
 import SwiftUI
@@ -14,7 +14,7 @@ import SampleProyect
 struct DemoFakerApp: App {
     var body: some Scene {
         WindowGroup {
-            DaggerShowcaseRootView(environment: FakerGitHubModule.self)
+            DaggerShowcaseRootView(initialTab: .fintechAB)
         }
     }
 }
