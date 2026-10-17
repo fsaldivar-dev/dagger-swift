@@ -211,49 +211,52 @@ enum AppModuleImpl: AppModule {
 
 ---
 
-## Estructura del Repositorio y Arquitectura Clean
+## Estructura del Repositorio, Clean Architecture y Linter
 
 ```text
-├── Package.swift                        # Configuración SPM (Swift 6.0, macOS 14+ / iOS 17+, CLI + Macros)
+├── Package.swift                        # Configuración SPM (Swift 6.0, macOS 14+ / iOS 17+, CLI + Macros + Testing)
 ├── Sources/
 │   ├── DaggerSwift/
 │   │   ├── GraphScope.swift             # v2: ScopeID, GraphScope, GlobalScope, Precondition, GraphError
 │   │   ├── ScopeContainer.swift         # v2: Motor DAG, Árbol de Scopes, Parameter Packs y Auditor de Leaks
 │   │   ├── SwiftUIGraph.swift           # v2: GraphScopeView y ciclo de vida automático en SwiftUI
-│   │   └── Module.swift                 # Macros: @Module, @Inject, @Singleton, @Scoped, @Provider, @BusinessRule, @Precondition
+│   │   └── Module.swift                 # Macros: @Module(0.1/1.0/2.0), @Scope (ModulePalette), @Inject, @Singleton, @Scoped, @Provider, @BusinessRule, @Precondition
 │   ├── DaggerSwiftMacros/               # Compiler Plugin nativo Swift 6 (protocolo JSON HostToPluginMessage sin dependencias)
+│   ├── DaggerSwiftTesting/              # DSL de pruebas del grafo: expectGraph, expectWhenCondition, matchesContract
 │   ├── DaggerCLI/                       # Herramienta de terminal (swift run dagger-cli)
-│   ├── SampleProyect/                   # Showcase Multi-Plataforma Clean Architecture + MVVM:
-│   │   ├── Domain/                      # Reglas de negocio puras (0 frameworks, 0 UI, 0 DI decorators)
-│   │   │   ├── Entities/                # GitHubUserProfile, GitHubRepoItem, ManifestoChapter, ShowcaseDeepLink
-│   │   │   ├── Preconditions/           # ValidatedSession (Token de seguridad exigido por el grafo)
-│   │   │   ├── Repositories/            # Protocolos: GitHubRepositoryProtocol, AuthRepositoryProtocol, etc.
-│   │   │   └── UseCases/                # Casos de Uso: GetProfileUseCase, GetRepositoriesUseCase, etc.
-│   │   ├── Data/                        # Implementaciones de datos y orígenes
-│   │   │   └── Repositories/            # LiveGitHubRepository (REST API), FakerGitHubRepository, AuthSessionRepository
-│   │   ├── DI/                          # Ensamblaje Dagger 2 Declarativo nativo (ShowcaseCoreModule.buildGraph)
-│   │   │   ├── Modules/                 # ShowcaseCoreModule, LiveGitHubModule, FakerGitHubModule, RepoDetailModule, etc.
-│   │   │   └── Injectables/             # Clases con @Inject (RepoDetailInspector, PrivateVaultInteractor)
-│   │   └── Presentation/                # Capa de Presentación MVVM en SwiftUI
-│   │       ├── Navigation/              # ShowcaseCoordinator (enrutamiento de sheets y captura de unmetPrecondition)
-│   │       ├── Home/                    # ShowcaseRootView, HomeViewModel
-│   │       ├── Repositories/            # RepoExplorerView, RepoExplorerViewModel, RepoBentoCardView, RepoClassicRowView
-│   │       ├── RepoDetail/              # RepoDetailView, RepoDetailViewModel (Scoped en RepoDetailModule)
-│   │       ├── PrivateVault/            # PrivateVaultView, PrivateVaultViewModel (Protegido por ValidatedSession)
-│   │       ├── DeepLinks/               # DeepLinksLabView, DeepLinksViewModel, AuthPreconditionGateSheet
-│   │       ├── Manifesto/               # ManifestoView, ManifestoViewModel
-│   │       └── ScopeMonitor/            # ScopeMonitorView, ScopeMonitorViewModel (Telemetría RAM y Stress Test)
-│   └── Demo/                            # Aplicación Xcode iOS / iPadOS / macOS con icono universal:
-│       ├── Demo/                        # Target Live conectando con GitHub REST API @fsaldivar-dev
-│       └── DemoFaker/                   # Target Sandbox Offline Determinista
+│   ├── SampleProyect/                   # Paquete SPM Modular con 3 Demos (Clean Architecture + MVVM + SOLID + Plug & UnPlug):
+│   │   ├── Sources/
+│   │   │   ├── AppFoundation/           # Modelos base y Design System compartido
+│   │   │   ├── MultiCountryNewsDemo/    # Demo 1: Login Multi-Country + Noticias en 4 Idiomas (MX, US, BR, FR)
+│   │   │   │   ├── Domain/              # Entities, Repository Protocols (CountryNewsModuleContract) y UseCases (@Inject)
+│   │   │   │   ├── Data/                # Actores Swift 6 por país y @Module(1.0, scope: CountryNewsScope.self)
+│   │   │   │   └── Presentation/        # MVVM: CountryNewsPortalViewModel (@Inject) + CountryNewsFeatureView
+│   │   │   ├── FintechMockupDemo/       # Demo 2: App Mockup Fintech con Paleta @Module(0.1/1.0/2.0) + @Scope + A/B Flags
+│   │   │   │   ├── Domain/              # Entities, Repository Protocols (FintechModuleContract) y GetFintechDashboardUseCase
+│   │   │   │   ├── Data/                # FintechBankingActor y @Module(0.1), @Module(1.0), @Module(2.0) + @Scope
+│   │   │   │   └── Presentation/        # MVVM: FintechMockupViewModel (@Inject) + FintechMockupFeatureView
+│   │   │   ├── Core/                    # Demo 3 (Domain): Protocolos, @Precondition ValidatedSession y UseCases (@Inject)
+│   │   │   ├── Services/                # Demo 3 (Data): LiveGitHubRepository + LiveGitHubModule (1.0) / LiveGitHubModuleV2 (2.0)
+│   │   │   ├── Features/                # Demo 3 (Presentation): FeedViewModel (@Inject), FeedView y Sub-Scope RepoDetailModule
+│   │   │   └── SampleProyect/           # ShowcaseRootView: Selector de las 3 Demos y switch Plug & UnPlug en vivo
+│   │   └── Tests/
+│   │       ├── AppUnitTests/            # Pruebas unitarias de UseCases y ViewModels con Fakes sin grafo
+│   │       └── AppGraphTests/           # Pruebas del grafo (DaggerSwiftTesting) + ArchitectureLinterTests (Linter SOLID/Clean)
+│   └── Demo/                            # Aplicación Xcode iOS / iPadOS / macOS:
+│       ├── Demo/                        # Target Live
+│       └── DemoFaker/                   # Target Sandbox Fintech A/B
 ```
 
 ---
 
-## Ejecutar Pruebas
+## Ejecutar Pruebas y Linter de Arquitectura
 
 ```bash
+# Ejecutar tests del motor principal DaggerSwift
 swift test
+
+# Ejecutar Linter de Arquitectura/SOLID + Unit Tests + Graph Tests del SampleProyect
+swift test --package-path Sources/SampleProyect
 ```
 
 ---
