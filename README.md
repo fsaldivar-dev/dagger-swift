@@ -17,6 +17,7 @@ Motor híbrido de **Resolución Explícita en Tiempo de Compilación (`@Module`,
    - [2.3 ¿Cómo funciona `@Inject` y `@Inject(scope:)` por dentro?](#23-cómo-funciona-inject-y-injectscope-por-dentro)
    - [2.4 ¿Qué es una `@Precondition` (Candado de Estado / Sesión por País)?](#24-qué-es-una-precondition-candado-de-estado--sesión-por-país)
    - [2.5 Ciclo de Vida, Memoria y `Plug & UnPlug` (`teardownScope()`)](#25-ciclo-de-vida-memoria-y-plug--unplug-teardownscope)
+   - [2.6 Fronteras de la Librería: Ciclo de Vida de Memoria (DI) vs. Ciclo de Vida de la App (RootComposer)](#26-fronteras-de-la-librería-ciclo-de-vida-de-memoria-di-vs-ciclo-de-vida-de-la-app-rootcomposer)
 3. **[Manual Completo de Pruebas (`DaggerSwiftTesting` + Unit Tests + Linter)](#3--manual-completo-de-pruebas-daggerswifttesting--unit-tests--linter)**
    - [3.1 Nivel 1: Pruebas Unitarias Puras (Sin Grafo)](#31-nivel-1-pruebas-unitarias-puras-sin-grafo)
    - [3.2 Nivel 2: Pruebas del Grafo de Dependencias (`expectGraph` DSL)](#32-nivel-2-pruebas-del-grafo-de-dependencias-expectgraph-dsl)
@@ -405,6 +406,117 @@ public final class RepoDetailInspector: ScopeDisposable, Sendable {
     }
 }
 ```
+
+---
+
+### 2.6 Fronteras de la Librería: Ciclo de Vida de Memoria (DI) vs. Ciclo de Vida de la App (RootComposer)
+
+Un error común en la arquitectura de software es **confundir la gestión de dependencias en memoria con la coordinación de flujos de usuario**. Para mantener Clean Architecture estricta y alta cohesión, `DaggerSwift v2` define límites explícitos sobre **qué resuelve y qué NO intenta resolver**:
+
+```text
+┌────────────────────────────────────────────────────────┐
+│  QUÉ RESUELVE DAGGERSWIFT v2 (Inyección de Memoria)    │
+├────────────────────────────────────────────────────────┤
+│ ✅ Ensamblaje y recetarios declarativos (@Module).     │
+│ ✅ Verificación estática de contratos en compile-time. │
+│ ✅ Ciclo de vida de objetos en RAM (@Scoped, teardown).│
+│ ✅ Detección de ciclos infinitos y retain cycles.      │
+│ ✅ Cortocircuito de precondiciones (@Precondition).    │
+│ ✅ Conmutación de variantes dinámicas (@BusinessRule). │
+└────────────────────────────────────────────────────────┘
+                           VS.
+┌────────────────────────────────────────────────────────┐
+│  QUÉ NO INTENTA RESOLVER (Ciclo de Vida de la App)     │
+├────────────────────────────────────────────────────────┤
+│ ❌ No es un Router ni Navigation Framework de UI.      │
+│ ❌ No sabe qué es un NavigationStack ni un Modal.      │
+│ ❌ No ejecuta pantallas interactivas de Login o FaceID.│
+│ ❌ No decide qué vista renderizar ante un error de UI. │
+└────────────────────────────────────────────────────────┘
+```
+
+#### El Problema Fundamental: ¿Quién resuelve lo que falta? (El Caso de la Sesión)
+
+Imagina que el usuario abre un Deep Link hacia una pantalla protegida (por ejemplo, `LoansFeatureView` o `CountryNewsFeatureView`), pero **no ha iniciado sesión**:
+
+1. **La pantalla declara su necesidad:** El `UseCase` de Préstamos exige la `@Precondition` `AuthenticatedCountrySession`.
+2. **El Grafo de DaggerSwift protege la memoria:** Al evaluar `@Precondition`, detecta que la sesión es `nil`. **Corta inmediatamente la resolución y lanza `GraphError.unmetPrecondition`**, evitando instanciar los repositorios o actores del préstamo (`allocations == 0`).
+3. **El límite del DI:** El Scope **NO puede resolver la sesión por sí mismo**. Para obtener una sesión se requiere **interacción humana** (que el usuario ingrese su usuario, contraseña, biometría u OTP). El motor de inyección no debe tener dependencias de UI ni presentar vistas de login.
+
+#### La Solución: El Patrón `RootComposer` / Flow Coordinator
+
+En Clean Architecture, el puente entre el **Grafo de Memoria** y la **Experiencia de Usuario (UX)** es el **`RootComposer`** (la máquina de estados del ciclo de vida de la aplicación):
+
+```mermaid
+flowchart TD
+    subgraph UI_App ["Capa de Aplicación y Navegación (RootComposer)"]
+        RC["RootComposer / AppCoordinator\n(Máquina de Estados de la App)"]
+        LOGIN["🔐 LoginFlowView / AuthCoordinator\n(Flujo Interactivo de UI)"]
+        FEATURE["💳 LoansFeatureView\n(Flujo de Negocio Protegido)"]
+    end
+
+    subgraph DI_Engine ["Motor DaggerSwift v2 (Scopes de Memoria)"]
+        DAG["ScopeContainer / @Module"]
+        PRE{"🔒 @Precondition\n¿Sesión Válida en RAM?"}
+        RAM["Frontera de Memoria\nGlobalScope ➔ SessionScope ➔ FeatureScope"]
+    end
+
+    FEATURE -->|"1. Pide dependencias"| DAG
+    DAG --> PRE
+    PRE -->|"2. ❌ unmetPrecondition"| RC
+    RC -->|"3. Dispara Flujo Interactivo"| LOGIN
+    LOGIN -->|"4. Usuario se autentica con éxito"| RC
+    RC -->|"5. Alimenta SessionScope en RAM"| DAG
+    RC -->|"6. Monta Pantalla Protegida"| FEATURE
+```
+
+#### Ejemplo de Implementación del `RootComposer` en SwiftUI
+
+El `RootComposer` observa el estado de la sesión y conmuta la jerarquía de UI sin acoplar las pantallas entre sí:
+
+```swift
+@MainActor
+@Observable
+public final class AppRootComposer {
+    public enum AppState {
+        case unauthenticated
+        case authenticated(AuthenticatedCountrySession)
+    }
+
+    public var state: AppState = .unauthenticated
+
+    public func handleLoginSuccess(_ session: AuthenticatedCountrySession) {
+        // 1. Alimenta la precondición en el SessionScope:
+        self.state = .authenticated(session)
+    }
+
+    public func handleLogout() {
+        // 2. Ejecuta teardownScope() del SessionScope liberando todos los datos privados:
+        CountryNewsScope.teardownScope()
+        self.state = .unauthenticated
+    }
+}
+
+// Vista raíz que orquesta los flujos de UI:
+public struct AppRootView: View {
+    @State private var composer = AppRootComposer()
+
+    public var body: some View {
+        switch composer.state {
+        case .unauthenticated:
+            // Quien resuelve la sesión es el flujo interactivo de Login:
+            LoginFeatureView(onSuccess: composer.handleLoginSuccess)
+        case .authenticated(let session):
+            // La pantalla protegida solo se monta cuando la precondición ya existe:
+            LoansFeatureView(session: session)
+        }
+    }
+}
+```
+
+* **Independencia Total:** `LoansFeatureView` jamás se entera de cómo funciona el Login ni qué APIs llama; solo recibe su sesión.
+* **Pureza de `Domain`:** Tu capa de dominio sigue siendo Swift puro sin acoplamiento a routers ni a vistas.
+* **Separación de Responsabilidades:** `DaggerSwift` gestiona la **memoria y las dependencias**, mientras que el `RootComposer` gestiona el **ciclo de vida de la aplicación y la navegación**.
 
 ---
 

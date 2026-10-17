@@ -99,6 +99,20 @@ En aplicaciones reales, un módulo cambia en dos ejes:
 1. **Eje Vertical (Evolución en el tiempo):** Lanzamos un MVP en `@Module(0.1)`, evolucionamos la tarjeta en `@Module(1.0, includes: [FintechModuleV0_1.self])` reutilizando el Core Bancario sin duplicar código, y lanzamos Metal en `@Module(2.0, includes: [FintechModuleV1.self])`.
 2. **Eje Horizontal (Variantes hermanas / Multi-Country):** `MexicoNewsModule`, `USANewsModule`, `BrazilNewsModule` y `FranceNewsModule` comparten el mismo `CountryNewsScope` y contrato `CountryNewsModuleContract`, pero cada uno protege su propio país con su `@Precondition` local.
 
+### 2.3 Límites de la Librería: Ciclo de Vida de Memoria (DI) vs. Ciclo de Vida de la App (`RootComposer`)
+
+Un pilar fundamental de Clean Architecture es **no confundir la gestión de objetos en memoria con la orquestación de la interfaz de usuario**:
+
+1. **Lo que resuelve DaggerSwift:**
+   - La frontera de memoria RAM (`GlobalScope` -> `SessionScope` -> `FeatureScope`).
+   - El cortocircuito estricto (`@Precondition`) para **no crear objetos si el estado no es válido**.
+   - La auditoría determinística de memoria al cerrar módulos (`teardownScope()` + `WeakObjectBox`).
+2. **Lo que NO intenta resolver DaggerSwift:**
+   - No es un Router, no maneja `NavigationStack`, no presenta modales ni sabe qué pantalla mostrar.
+   - **¿Quién resuelve lo que falta?** Si una pantalla requiere `AuthenticatedSession`, el motor de DI aborta la construcción antes de tocar la red o la base de datos (`unmetPrecondition`). Pero el motor **no puede ni debe mostrar una pantalla de Login**, porque obtener una sesión requiere interacción humana (UX).
+3. **El Patrón `RootComposer`:**
+   - La máquina de estados de la UI (`RootComposer` o `AppCoordinator`) es quien atrapa el requisito faltante, monta el flujo interactivo de Login en SwiftUI/UIKit, espera a que el usuario se autentique, y finalmente alimenta el `SessionScope` en RAM para desbloquear la feature protegida.
+
 ---
 
 ## Capítulo 3: Debate Cara a Cara contra las Librerías Reales (`Point-Free TCA`, `Factory`, `Swinject`)
