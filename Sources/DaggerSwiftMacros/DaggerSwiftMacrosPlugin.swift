@@ -104,7 +104,7 @@ struct DaggerSwiftMacrosPlugin {
             if macroRole == "extension" {
                 expanded = expandModuleExtension(extendedType: extendedType)
             } else if macroRole == "member" {
-                expanded = expandModuleMember(declSource: declSource)
+                expanded = expandModuleMember(attrSource: attrSource, declSource: declSource)
             } else {
                 expanded = nil
             }
@@ -161,12 +161,17 @@ struct DaggerSwiftMacrosPlugin {
         """
     }
 
-    private static func expandModuleMember(declSource: String) -> String {
+    private static func expandModuleMember(attrSource: String, declSource: String) -> String {
         let clean = stripComments(declSource)
+        let includedModules = extractModuleIncludes(from: attrSource)
         let functions = parseModuleFunctions(from: clean)
 
         var lines: [String] = []
         lines.append("nonisolated public static func register(in container: DaggerSwift.ScopeContainer) {")
+
+        for included in includedModules {
+            lines.append("    \(included).register(in: container)")
+        }
 
         for fn in functions {
             let closureParams: String
@@ -443,6 +448,25 @@ struct DaggerSwiftMacrosPlugin {
             return String(arg[arg.index(after: colon)...]).trimmingCharacters(in: .whitespacesAndNewlines)
         }
         return arg
+    }
+
+    private static func extractModuleIncludes(from attrSource: String) -> [String] {
+        guard var arg = extractAttributeArgument(from: attrSource), !arg.isEmpty else {
+            return []
+        }
+        if let colon = arg.firstIndex(of: ":") {
+            arg = String(arg[arg.index(after: colon)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if arg.hasPrefix("[") && arg.hasSuffix("]") {
+            arg = String(arg.dropFirst().dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return splitByTopLevelComma(arg).compactMap { item in
+            var cleaned = item.trimmingCharacters(in: .whitespacesAndNewlines)
+            if cleaned.hasSuffix(".self") {
+                cleaned = String(cleaned.dropLast(".self".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            return cleaned.isEmpty ? nil : cleaned
+        }
     }
 
     private static func extractPropertyType(from declSource: String) -> String? {
