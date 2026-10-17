@@ -13,7 +13,7 @@ public struct RepoDetailView: View {
     public let session: ActiveRepoSession
     public let onClose: () -> Void
 
-    private var repo: GitHubRepoItem { session.inspector.repo }
+    private var repo: GitHubRepoItem { session.repo }
 
     public init(session: ActiveRepoSession, onClose: @escaping () -> Void) {
         self.session = session
@@ -85,7 +85,7 @@ public struct RepoDetailView: View {
                     Button(role: .destructive) {
                         onClose()
                     } label: {
-                        Label("Cerrar y Liberar Scope (`teardown()`)", systemImage: "trash.fill")
+                        Label("Cerrar y Liberar Scope (`teardownScope()`)", systemImage: "trash.fill")
                             .font(.subheadline.bold())
                             .frame(maxWidth: .infinity)
                             .padding(12)
@@ -116,7 +116,7 @@ public struct RepoDetailView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Sub-Scope Activo: `RepoDetailModule`")
                     .font(.caption.bold())
-                Text("ID: `\(session.inspector.instanceID)` · Instancias en RAM: \(session.scope.activeInstanceCount)")
+                Text("ID: `\(session.inspector.instanceID)` · Sesión: @\(session.inspector.session.username)")
                     .font(.caption2.monospaced())
                     .foregroundStyle(.secondary)
             }

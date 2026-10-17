@@ -2,19 +2,18 @@
 //  CountryNewsViewModel.swift
 //  MultiCountryNewsDemo · Presentation -> ViewModel (MVVM)
 //
-//  Usa `@Inject` igual que `FeedViewModel`: cero `init` manual y cero `rootContainer.resolve` en el inicializador.
+//  Usa únicamente el decorador `@Inject(scope: CountryNewsScope.self)` y los `@Module`s
+//  sin referenciar `ScopeContainer`.
 //
 
 import SwiftUI
 import DaggerSwift
 
 @MainActor
-@Inject
+@Inject(scope: CountryNewsScope.self)
 public final class CountryNewsPortalViewModel: ObservableObject {
     public let authRepository: any CountryAuthRepositoryProtocol
-    public let container: ScopeContainer
-
-    private var activeCountryScope: ScopeContainer?
+    public let initialLocale: any CountryLocaleProviderProtocol
 
     @Published public var selectedCountry: SupportedCountry = .mexico
     @Published public var currentCopy: LocalizedCountryCopy = MexicoLocaleProvider().copy
@@ -23,21 +22,19 @@ public final class CountryNewsPortalViewModel: ObservableObject {
     @Published public var isAuthenticated: Bool = false
 
     public func loadInitialCountry() async {
-        if activeCountryScope == nil {
-            selectCountry(selectedCountry)
-        } else {
-            await refreshState()
+        currentCopy = initialLocale.copy
+        if identifierInput.isEmpty {
+            identifierInput = initialLocale.copy.defaultIdentifier
         }
+        await refreshState()
     }
 
     public func selectCountry(_ country: SupportedCountry) {
+        Self.module(for: selectedCountry).teardownScope()
         selectedCountry = country
-        activeCountryScope?.teardown()
 
-        let newScope = container.makeChildScope(for: Self.module(for: country))
-        activeCountryScope = newScope
-
-        if let locale = try? newScope.resolve((any CountryLocaleProviderProtocol).self) {
+        let activeModule = Self.module(for: country)
+        if let locale = try? activeModule.resolve((any CountryLocaleProviderProtocol).self) {
             currentCopy = locale.copy
             identifierInput = locale.copy.defaultIdentifier
         }
@@ -63,11 +60,8 @@ public final class CountryNewsPortalViewModel: ObservableObject {
     }
 
     private func refreshState() async {
-        if activeCountryScope == nil {
-            activeCountryScope = container.makeChildScope(for: Self.module(for: selectedCountry))
-        }
-        guard let scope = activeCountryScope,
-              let useCase = try? scope.resolve(GetLocalizedNewsFeedUseCase.self) else {
+        let activeModule = Self.module(for: selectedCountry)
+        guard let useCase = try? activeModule.resolve(GetLocalizedNewsFeedUseCase.self) else {
             isAuthenticated = false
             headlines = []
             return

@@ -19,6 +19,22 @@ public protocol GraphModule: GraphScope {
 
 public extension GraphModule {
     static var moduleVersion: String { "1.0" }
+
+    /// Resuelve cualquier componente `@Inject` o dependencia registrada directamente desde el `@Module`,
+    /// sin necesidad de instanciar ni manipular `ScopeContainer` en el código de la aplicación.
+    static func resolve<T>(
+        _ type: T.Type = T.self,
+        including extraModules: [any GraphModule.Type] = []
+    ) throws -> T {
+        let scope = ScopeContainer.sharedRuntimeScope(for: Self.self, including: extraModules)
+        return try scope.resolve(type)
+    }
+
+    /// Libera las instancias `@Scoped` asociadas a este `@Module` y devuelve los nombres de posibles fugas de memoria.
+    @discardableResult
+    static func teardownScope() -> [String] {
+        ScopeContainer.teardownSharedRuntimeScope(for: Self.self)
+    }
 }
 
 /// Tipo marcado con `@Inject`: sabe registrarse a sí mismo en el grafo.
@@ -165,6 +181,37 @@ public final class ScopeContainer: @unchecked Sendable {
             module.register(in: container)
         }
         return container
+    }
+
+    private var activeChildScopes: [ScopeID: ScopeContainer] = [:]
+    private static let runtimeRoot = ScopeContainer.root()
+
+    internal static func sharedRuntimeScope<M: GraphModule>(
+        for module: M.Type,
+        including extraModules: [any GraphModule.Type]
+    ) -> ScopeContainer {
+        runtimeRoot.lock.lock()
+        defer { runtimeRoot.lock.unlock() }
+
+        let id = M.scopeID
+        if let existing = runtimeRoot.activeChildScopes[id], !existing.isTornDown {
+            for extra in extraModules {
+                extra.register(in: existing)
+            }
+            return existing
+        }
+        let child = runtimeRoot.makeChildScope(for: module, modules: extraModules)
+        runtimeRoot.activeChildScopes[id] = child
+        return child
+    }
+
+    internal static func teardownSharedRuntimeScope<M: GraphModule>(for module: M.Type) -> [String] {
+        runtimeRoot.lock.lock()
+        defer { runtimeRoot.lock.unlock() }
+
+        let id = M.scopeID
+        guard let existing = runtimeRoot.activeChildScopes.removeValue(forKey: id) else { return [] }
+        return existing.teardown()
     }
 
     // MARK: - Jerarquía de Scopes (Hijos) y Vínculo con UIKit / Coordinators
@@ -659,7 +706,7 @@ public final class ScopeContainer: @unchecked Sendable {
         repeat depNames.append(String(reflecting: (each D).self))
         repeat depTypes.append((each D).self)
 
-        recipes[key] = GraphRecipe(
+        let recipe = GraphRecipe(
             typeName: typeName,
             lifetime: lifetime,
             dependencies: depNames,
@@ -668,6 +715,10 @@ public final class ScopeContainer: @unchecked Sendable {
                 try factory(repeat try resolver.resolve((each D).self))
             }
         )
+        recipes[key] = recipe
+        if lifetime == .singleton && self !== rootContainer && rootContainer.recipes[key] == nil {
+            rootContainer.recipes[key] = recipe
+        }
     }
 
     private func executeWithCycleTracking<R>(

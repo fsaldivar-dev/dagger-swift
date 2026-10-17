@@ -26,7 +26,7 @@ public enum CountryAuthServiceModule {
     }
 }
 
-@Module(1.0, scope: CountryNewsScope.self)
+@Module(1.0, scope: CountryNewsScope.self, includes: [CountryNewsCoreModule.self, CountryAuthServiceModule.self])
 public enum MexicoNewsModule {
     @Scoped
     public static func localeProvider() -> any CountryLocaleProviderProtocol { MexicoLocaleProvider() }
@@ -35,7 +35,7 @@ public enum MexicoNewsModule {
     public static func newsRepository() -> any CountryNewsRepositoryProtocol { MexicoNewsRepository() }
 }
 
-@Module(1.0, scope: CountryNewsScope.self)
+@Module(1.0, scope: CountryNewsScope.self, includes: [CountryNewsCoreModule.self, CountryAuthServiceModule.self])
 public enum USANewsModule {
     @Scoped
     public static func localeProvider() -> any CountryLocaleProviderProtocol { USALocaleProvider() }
@@ -44,7 +44,7 @@ public enum USANewsModule {
     public static func newsRepository() -> any CountryNewsRepositoryProtocol { USANewsRepository() }
 }
 
-@Module(1.0, scope: CountryNewsScope.self)
+@Module(1.0, scope: CountryNewsScope.self, includes: [CountryNewsCoreModule.self, CountryAuthServiceModule.self])
 public enum BrazilNewsModule {
     @Scoped
     public static func localeProvider() -> any CountryLocaleProviderProtocol { BrazilLocaleProvider() }
@@ -53,7 +53,7 @@ public enum BrazilNewsModule {
     public static func newsRepository() -> any CountryNewsRepositoryProtocol { BrazilNewsRepository() }
 }
 
-@Module(1.0, scope: CountryNewsScope.self)
+@Module(1.0, scope: CountryNewsScope.self, includes: [CountryNewsCoreModule.self, CountryAuthServiceModule.self])
 public enum FranceNewsModule {
     @Scoped
     public static func localeProvider() -> any CountryLocaleProviderProtocol { FranceLocaleProvider() }

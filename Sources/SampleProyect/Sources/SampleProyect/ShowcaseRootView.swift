@@ -37,26 +37,14 @@ public struct ShowcaseRootView: View {
     ) {
         self._activeDemo = State(initialValue: initialTab)
 
-        // 1. Grafo Demo 1: Multi-Country Login + News (MX, US, BR, FR)
-        let countryRoot = ScopeContainer.root(modules: [
-            CountryNewsCoreModule.self,
-            CountryAuthServiceModule.self
-        ])
-        let countryVM = try! CountryNewsPortalViewModel(from: countryRoot)
-        _countryNewsVM = StateObject(wrappedValue: countryVM)
+        // 1. Demo 1: Multi-Country Login + News (MX, US, BR, FR)
+        _countryNewsVM = StateObject(wrappedValue: try! MexicoNewsModule.resolve())
 
-        // 2. Grafo Demo 2: Fintech Mockup (Paleta Module(0.1), Module(1.0), Module(2.0) + A/B Flags)
-        let fintechRoot = ScopeContainer.root(modules: [
-            FintechCoreModule.self,
-            FintechSharedFlagsModule.self
-        ])
-        let finVM = try! FintechMockupViewModel(from: fintechRoot)
-        _fintechVM = StateObject(wrappedValue: finVM)
+        // 2. Demo 2: Fintech Mockup (Paleta Module(0.1), Module(1.0), Module(2.0) + A/B Flags)
+        _fintechVM = StateObject(wrappedValue: try! FintechModuleV2.resolve())
 
-        // 3. Grafo Demo 3: GitHub Social Developer Profile (@fsaldivar-dev)
-        let githubContainer = ShowcaseCoreModule.buildGraph(including: [environment])
-        let feedVM = try! FeedViewModel(from: githubContainer)
-        _githubFeedVM = StateObject(wrappedValue: feedVM)
+        // 3. Demo 3: GitHub Social Developer Profile (@fsaldivar-dev)
+        _githubFeedVM = StateObject(wrappedValue: try! ShowcaseCoreModule.resolve(including: [environment]))
     }
 
     public var body: some View {

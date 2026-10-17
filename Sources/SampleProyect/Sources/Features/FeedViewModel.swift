@@ -3,8 +3,7 @@
 //  Features
 //
 //  Capa Features · MVVM ViewModel unificado con @Inject.
-//  Observa que NO requiere escribir un `init` manual: la macro @Inject genera
-//  tanto el `init` para pruebas unitarias como `init(from container:) throws`.
+//  Usa únicamente los decoradores `@Inject` y `@Module` sin tocar `ScopeContainer`.
 //
 
 import Foundation
@@ -20,7 +19,6 @@ public final class FeedViewModel: ObservableObject {
     public let getRepositoriesUseCase: GetRepositoriesUseCase
     public let authRepository: any AuthRepositoryProtocol
     public let flagRepository: any FeatureFlagRepositoryProtocol
-    public let container: ScopeContainer
 
     @Published public var profile: GitHubUserProfile = .fsaldivarDefault
     @Published public var repositories: [GitHubRepoItem] = []
@@ -79,7 +77,7 @@ public final class FeedViewModel: ObservableObject {
     }
 
     public func refreshStrategy() {
-        if let updated = try? container.resolve((any RepoExplorerStrategyProtocol).self) {
+        if let updated = try? ShowcaseCoreModule.resolve((any RepoExplorerStrategyProtocol).self) {
             currentStrategy = updated
         }
     }
@@ -115,27 +113,24 @@ public final class FeedViewModel: ObservableObject {
 
     public func openRepository(_ repo: GitHubRepoItem) {
         closeActiveRepoDetail()
-        let childScope = container.makeChildScope(for: RepoDetailModule.self)
-        childScope.bindInstance(repo)
-
         do {
-            let inspector = try childScope.resolve(RepoDetailInspector.self)
+            let inspector = try RepoDetailModule.resolve(RepoDetailInspector.self)
             totalScopesCreated += 1
-            activeRepoSession = ActiveRepoSession(scope: childScope, inspector: inspector)
+            activeRepoSession = ActiveRepoSession(repo: repo, inspector: inspector)
         } catch let GraphError.unmetPrecondition(_, reason) {
-            childScope.teardown()
+            RepoDetailModule.teardownScope()
             pendingRepo = repo
             blockedReason = reason
             showAuthGateSheet = true
         } catch {
-            childScope.teardown()
+            RepoDetailModule.teardownScope()
         }
     }
 
     public func closeActiveRepoDetail() {
-        guard let scope = activeRepoSession?.scope else { return }
+        guard activeRepoSession != nil else { return }
         activeRepoSession = nil
-        lastLeakAuditCount = scope.teardown().count
+        lastLeakAuditCount = RepoDetailModule.teardownScope().count
         totalScopesTornDown += 1
     }
 }

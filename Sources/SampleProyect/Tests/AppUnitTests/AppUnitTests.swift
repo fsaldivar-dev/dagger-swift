@@ -57,8 +57,7 @@ struct AppUnitTests {
     @Test("FeedViewModel filtra repositorios por nombre")
     @MainActor
     func testBuscarRepositorioEnFeed() async throws {
-        let graph = ShowcaseCoreModule.buildGraph(including: [FakerGitHubModule.self])
-        let viewModel = try FeedViewModel(from: graph)
+        let viewModel: FeedViewModel = try ShowcaseCoreModule.resolve(including: [FakerGitHubModule.self])
 
         await viewModel.loadInitialData()
         viewModel.searchText = "AutoPilot"
