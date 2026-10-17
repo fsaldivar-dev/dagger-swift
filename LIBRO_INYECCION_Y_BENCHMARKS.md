@@ -119,13 +119,13 @@ En [`DIFrameworksDebateTests.swift`](./Benchmarks/Tests/DIFrameworksDebateTests/
 | :--- | :---: | :---: | :---: | :---: |
 | **Verificación en Tiempo de Compilación** | ❌ No (`nil` en Runtime) | ⚠️ Parcial | ⚠️ Falla en Runtime si falta `testValue` | **✅ Sí (`@Module` Contracts + `@Scope`)** |
 | **Cero contaminación en `Domain` (`init` puro)** | ❌ `resolver.resolve` | ❌ `@Injected` | ❌ `@Dependency` dentro de `Domain` | **✅ Sí (`@Inject` genera `init` limpio)** |
-| **Override `@TaskLocal` profundo sin tocar `init`** | ❌ No | ❌ No | **✅ Sí (`withDependencies`)** | ❌ Exige constructor o `ScopeContainer` |
-| **Weak Cache `.shared` automático sin `teardown()`** | ❌ No | **✅ Sí (`.shared`)** | ❌ No | ❌ `@Scoped` exige llamar a `teardown()` |
-| **Registro múltiple por `name:` String + `argument:`** | **✅ Sí (`name:`)** | ⚠️ Parcial | ❌ No | ❌ Indexa por `TypeKey(T.self)` |
+| **Variantes de Producto (Multi-Country/Versiones) sin Naming Layers** | ❌ No (Parche con `name:` String) | ❌ No (Muta contenedor global) | ⚠️ Solo en Tests (`withDependencies`) | **✅ Sí (Nativo con `@Module` + `@Scope`)** |
 | **Nodos `@Precondition` (Cortocircuito de Sesión)** | ❌ No existe | ❌ No existe | ❌ No existe | **✅ Sí (`@Precondition` nativo, 0 allocs)** |
 | **Nodos `@BusinessRule` (A/B Flags en el Grafo)** | ❌ Manual | ❌ Manual | ❌ Manual | **✅ Sí (`@BusinessRule` auditable)** |
 | **Herencia de Evolución `@Module(0.1 -> 1.0 -> 2.0)`** | ❌ No existe | ❌ No existe | ❌ No existe | **✅ Sí (`@Scope` + `includes:`)** |
 | **`teardown()` Jerárquico + Auditoría de Retain Cycles** | ❌ No audita leaks | ❌ No audita leaks | ❌ No audita leaks | **✅ Sí (`WeakObjectBox` devuelve fugas)** |
+| **Weak Cache `.shared` automático sin `teardown()`** | ❌ No | **✅ Sí (`.shared`)** | ❌ No | ❌ `@Scoped` exige llamar a `teardown()` |
+| **Override `@TaskLocal` profundo sin tocar `init`** | ❌ No | ❌ No | **✅ Sí (`withDependencies`)** | ❌ Exige constructor o `ScopeContainer` |
 
 ---
 
@@ -151,17 +151,56 @@ En [`DIFrameworksDebateTests.swift`](./Benchmarks/Tests/DIFrameworksDebateTests/
 
 ---
 
-### Round 2: Obligando a Fallar a `DaggerSwift` (Donde Ganan Ellos — Honestidad Técnica)
+### Round 2: Comparativa de Paradigmas y el Dilema de `TypeKey` vs. `named: String`
 
-1. **`Round 2.1` — Donde `Point-Free swift-dependencies` (TCA) le gana a `DaggerSwift` (`testWherePointFreeBeatsDaggerSwiftDeepTreeTaskLocalOverride`):**
-   - **Su victoria:** Si tienes `Level1 -> Level2 -> TcaCoupledUseCase`, con `withDependencies { $0.benchRepo = ... } operation: { Level1().run() }` puedes inyectar un mock a 3 niveles de profundidad mediante `@TaskLocal` **sin pasar parámetros por los constructores de `Level1` ni de `Level2`**.
-   - **Cómo obligamos a fallar a `DaggerSwift`:** En modo explícito debes pasar las dependencias por `init` o módulo. Y en modo dinámico (`ScopeContainer`), si creas `ScopeContainer.root(modules: [])` olvidando registrar el módulo y llamas a `try emptyDaggerScope.resolve(BenchUseCase.self)`, **`DaggerSwift` también falla en Runtime** lanzando `GraphError.missingProvider`.
-2. **`Round 2.2` — Donde `Factory` le gana a `DaggerSwift` (`testWhereFactoryBeatsDaggerSwiftAutomaticWeakSharedScope`):**
-   - **Su victoria:** El scope `.shared` de `Factory` mantiene una referencia `weak` en caché: mientras las vistas estén vivas comparten la misma instancia (`ref1 === ref2`), y en cuanto sale del bloque `do { ... }` **se libera sola de RAM (`weakFactoryObserver == nil`) sin llamar a ningún `teardown()`**.
-   - **Cómo obligamos a fallar a `DaggerSwift`:** En `DaggerSwift`, `@Scoped` retiene fuertemente la instancia en `scopedInstances` hasta que alguien llame a `featureScope.teardown()`. Si el desarrollador olvida llamar a `teardown()`, el objeto se queda retenido en RAM (`#expect(weakDaggerObserver != nil)`).
-3. **`Round 2.3` — Donde `Swinject` le gana a `DaggerSwift` (`testWhereSwinjectBeatsDaggerSwiftNamedAndParameterizedRegistrations`):**
-   - **Su victoria:** `Swinject` permite registrar el mismo protocolo múltiples veces en el mismo contenedor usando `name: "mexico"` y `name: "usa"` y pasar argumentos dinámicos en el momento de resolver (`swinject.resolve(..., name: "mexico", argument: "cdmx")`).
-   - **Cómo obligamos a fallar a `DaggerSwift`:** `ScopeContainer` indexa por `TypeKey(T.self)` (`ObjectIdentifier`). Si llamas dos veces a `daggerScope.provide((any BenchApiClientProtocol).self)` en el mismo contenedor, **el segundo registro aplasta silenciosamente al primero**.
+Un análisis técnico riguroso debe explicar por qué existen ciertas diferencias de API:
+
+```mermaid
+flowchart TD
+    subgraph Round2 ["🥊 Comparativa de Paradigmas"]
+        PF["Point-Free TCA\nwithDependencies (@TaskLocal)\nPropagación implícita a 3 niveles\nsin tocar constructores"] -->|"Trade-off"| D_PF["DaggerSwift: Pureza de Inyección por Constructor\nDomain permanece 100% libre de DI y TaskLocals"]
+        FAC["Factory\nScope .shared (Weak Cache)\nSe libera solo con ARC\nsin llamar a teardown()"] -->|"Trade-off"| D_FAC["DaggerSwift: Ciclo de Vida Explícito y Auditable\nScopeContainer controla teardown() y detecta retain cycles"]
+        SW["Swinject\nregister(..., name: 'mx')\nBolsa de gatos con Strings mágicos\ny resolución directa por contenedor"] -->|"Solución Limpia"| D_SW["DaggerSwift: Variantes Tipadas sin Naming Layer\nEl tipo es el contrato; el Scope selecciona el @Module"]
+    end
+```
+
+#### ¿Por qué no usamos `name: String` ni "Naming Layers" en DaggerSwift?
+En `Swinject`, cuando necesitan dos implementaciones del mismo protocolo (ej. México y USA), recurren a cadenas de texto (`name: "mexico"`). Esto introduce tres problemas severos de arquitectura:
+1. **Riesgo de Typos en Runtime:** Un error de dedo como `name: "mejico"` compila limpio y crashea la app en producción.
+2. **Contaminación de Service Locator:** Para obtener la variante, obligas al código a invocar directamente al contenedor (`container.resolve(..., name: "mexico")`).
+3. **Capa Artificial Innecesaria ("Naming Layer"):** Inventan un nombre arbitrario para parchar la falta de soporte modular de primer nivel.
+
+#### Cómo resuelve `DaggerSwift` las Variantes sin Naming Layers (Clean Architecture):
+En `DaggerSwift`, indexamos estrictamente por tipo (`TypeKey` / `ObjectIdentifier(T.self)`) para garantizar **seguridad en tiempo de compilación y despacho estático ultra-rápido**. Para tener múltiples variantes del mismo protocolo, el diseño ofrece dos soluciones limpias:
+
+1. **Variantes por Módulo y Scope (Recomendado para Features y Países):**
+   Tanto `MexicoNewsModule` como `USANewsModule` conforman el mismo contrato `CountryNewsModuleContract`. El caso de uso en `Domain` solo pide el protocolo puro:
+   ```swift
+   @Inject
+   public struct GetHeadlineNewsUseCase {
+       public let localeProvider: any CountryLocaleProviderProtocol
+       public func execute() -> String { localeProvider.regionCode }
+   }
+   ```
+   **Cero strings mágicos.** Quien decide qué implementación entregar es el `@Scope` activo:
+   ```swift
+   let mxModule = CountryNewsScope.module(for: .mexico) // Entrega MexicoLocaleProvider
+   let usModule = CountryNewsScope.module(for: .usa)    // Entrega USALocaleProvider
+   ```
+
+2. **Protocolos Refinados en `Domain` (Cuando ambas variantes coexisten en la misma pantalla):**
+   Si una pantalla de comparación necesita ambas APIs al mismo tiempo, en `Domain` se modelan como tipos de Swift:
+   ```swift
+   public protocol MexicoNewsApiProtocol: NewsApiProtocol {}
+   public protocol USANewsApiProtocol: NewsApiProtocol {}
+
+   @Inject
+   public struct CompareNewsUseCase {
+       public let mexico: any MexicoNewsApiProtocol
+       public let usa: any USANewsApiProtocol
+   }
+   ```
+   El compilador de Swift verifica los tipos, Xcode ofrece autocompletado y **ninguna capa de la app se ensucia con cadenas de texto.**
 
 ---
 
@@ -174,29 +213,29 @@ Ejecutando `swift test --package-path Benchmarks` en Apple Silicon (`arm64e-appl
 ║     🥊 DEBATE EMPÍRICO Y BENCHMARK REAL (10,000 RESOLUCIONES EN PAQUETE SPM DEDICADO)        ║
 ╠══════════════════════════════════════════════════════════════════════════════════════════════╣
 ║ TIEMPO DE EJECUCIÓN ORDENADO (Menor barra = Más rápido):                                     ║
-  1. DaggerSwift Explícito (@Module/@Scope) |   1.46 ms (  1.0x) |█
-  2. Point-Free swift-dependencies (TCA)    |  11.40 ms (  7.8x) |██████
-  3. Swinject (Dynamic Dictionary)          |  21.35 ms ( 14.7x) |████████████
-  4. DaggerSwift Motor DAG (ScopeContainer) |  21.74 ms ( 14.9x) |█████████████
-  5. Factory (Container.shared)             |  49.55 ms ( 34.0x) |██████████████████████████████
+  1. DaggerSwift Explícito (@Module/@Scope) |   1.34 ms (  1.0x) |█
+  2. Point-Free swift-dependencies (TCA)    |  11.23 ms (  8.4x) |██████
+  3. DaggerSwift Motor DAG (ScopeContainer) |  19.18 ms ( 14.4x) |███████████
+  4. Swinject (Dynamic Dictionary)          |  20.50 ms ( 15.3x) |████████████
+  5. Factory (Container.shared)             |  48.15 ms ( 36.0x) |██████████████████████████████
 ╚══════════════════════════════════════════════════════════════════════════════════════════════╝
 ```
 
 ```mermaid
 xychart-beta
     title "Tiempo de 10,000 Resoluciones en ms (Menor es Mejor)"
-    x-axis ["DaggerSwift Explícito", "Point-Free (TCA)", "Swinject", "DaggerSwift DAG", "Factory"]
+    x-axis ["DaggerSwift Explícito", "Point-Free (TCA)", "DaggerSwift DAG", "Swinject", "Factory"]
     y-axis "Milisegundos (ms)" 0 --> 55
-    bar [1.46, 11.40, 21.35, 21.74, 49.55]
+    bar [1.34, 11.23, 19.18, 20.50, 48.15]
 ```
 
 | Posición | Librería / Modo (10,000 iteraciones) | Tiempo Total | Latencia / Resolución | Ratio vs. #1 |
 | :---: | :--- | :---: | :---: | :---: |
-| **🥇 1** | **DaggerSwift Modo Explícito (`@Module` + `@Scope` + `@Inject`)** | **`1.46 ms`** | **`~146 ns`** | **`1.0x` (Base)** |
-| **🥈 2** | **Point-Free `swift-dependencies` (`@Dependency` + `@TaskLocal`)** | **`11.40 ms`** | **`~1.14 µs`** | `7.8x` |
-| **🥉 3** | **Swinject (`Swinject.Container` con `.container` + `.transient`)** | **`21.35 ms`** | **`~2.13 µs`** | `14.7x` |
-| **4** | **DaggerSwift Motor DAG (`ScopeContainer` + CycleCheck + WeakBox)** | **`21.74 ms`** | **`~2.17 µs`** | `14.9x` |
-| **5** | **Factory (`Container.shared` con `.singleton` + transient)** | **`49.55 ms`** | **`~4.95 µs`** | `34.0x` |
+| **🥇 1** | **DaggerSwift Modo Explícito (`@Module` + `@Scope` + `@Inject`)** | **`1.34 ms`** | **`~134 ns`** | **`1.0x` (Base)** |
+| **🥈 2** | **Point-Free `swift-dependencies` (`@Dependency` + `@TaskLocal`)** | **`11.23 ms`** | **`~1.12 µs`** | `8.4x` |
+| **🥉 3** | **DaggerSwift Motor DAG (`ScopeContainer` + CycleCheck + WeakBox)** | **`19.18 ms`** | **`~1.91 µs`** | `14.4x` |
+| **4** | **Swinject (`Swinject.Container` con `.container` + `.transient`)** | **`20.50 ms`** | **`~2.05 µs`** | `15.3x` |
+| **5** | **Factory (`Container.shared` con `.singleton` + transient)** | **`48.15 ms`** | **`~4.81 µs`** | `36.0x` |
 
 ---
 
@@ -205,6 +244,7 @@ xychart-beta
 ### ✅ Cuándo elegir `DaggerSwift v2`
 - Quieres **Clean Architecture estricta** donde `Domain` no importe ninguna librería de terceros ni use `@Dependency` / `@Injected`.
 - Necesitas modelar **Variantes Multi-Country**, **Evolución de Producto (`0.1 -> 1.0 -> 2.0`) con herencia real (`includes:`)** y **Experimentos A/B (`@BusinessRule`)**.
+- Quieres **Rendimiento Máximo**: `1.34 ms` en Modo Explícito (llamada directa optimizada por Swift 6) y `19.18 ms` en el Motor DAG (superando a Swinject y Factory aún haciendo detección de ciclos y auditoría de memoria).
 - Necesitas **Cortocircuito por `@Precondition`** (no alocar pantallas privadas si no hay sesión) y **Auditoría de Memory Leaks (`teardownScope()`)** al desmontar features.
 
 ### ⚠️ Cuándo otra librería puede ajustarse mejor
