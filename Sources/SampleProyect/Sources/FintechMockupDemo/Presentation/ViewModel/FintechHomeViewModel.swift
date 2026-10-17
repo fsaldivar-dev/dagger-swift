@@ -2,6 +2,8 @@
 //  FintechHomeViewModel.swift
 //  FintechMockupDemo · Presentation -> ViewModel (MVVM)
 //
+//  Usa `@Inject`: cero `init` manual y cero `rootContainer.resolve` en el inicializador.
+//
 
 import SwiftUI
 import DaggerSwift
@@ -27,31 +29,25 @@ public enum FintechModulePaletteOption: String, CaseIterable, Identifiable, Send
 }
 
 @MainActor
+@Inject
 public final class FintechMockupViewModel: ObservableObject {
-    private let rootContainer: ScopeContainer
-    private let flagsRepository: any FintechABFlagsRepositoryProtocol
+    public let flagsRepository: any FintechABFlagsRepositoryProtocol
+    public let container: ScopeContainer
+
     private var activeFintechScope: ScopeContainer?
 
     @Published public var selectedPalette: FintechModulePaletteOption = .v2_0
     @Published public var isWealthBentoVariantB: Bool = true
     @Published public var isInstantCreditBoostVariantB: Bool = true
-    @Published public var dashboard: GetFintechDashboardUseCase
+    @Published public var dashboard: GetFintechDashboardUseCase?
     @Published public var transactions: [FintechTransactionItem] = []
     @Published public var boostActivatedMessage: String? = nil
 
-    public init(rootContainer: ScopeContainer) throws {
-        self.rootContainer = rootContainer
-        self.flagsRepository = try rootContainer.resolve((any FintechABFlagsRepositoryProtocol).self)
-
-        let scope = rootContainer.makeChildScope(for: FintechModuleV2.self)
-        self.activeFintechScope = scope
-        let initialDashboard = try scope.resolve(GetFintechDashboardUseCase.self)
-        self.dashboard = initialDashboard
-        self.isWealthBentoVariantB = flagsRepository.isWealthBentoVariantB
-        self.isInstantCreditBoostVariantB = flagsRepository.isInstantCreditBoostVariantB
-        Task {
-            self.transactions = await initialDashboard.coreBanking.fetchRecentTransactions()
-        }
+    public func loadInitialDashboard() {
+        guard activeFintechScope == nil else { return }
+        isWealthBentoVariantB = flagsRepository.isWealthBentoVariantB
+        isInstantCreditBoostVariantB = flagsRepository.isInstantCreditBoostVariantB
+        selectPalette(selectedPalette)
     }
 
     public func selectPalette(_ option: FintechModulePaletteOption) {
@@ -59,7 +55,7 @@ public final class FintechMockupViewModel: ObservableObject {
         boostActivatedMessage = nil
         activeFintechScope?.teardown()
 
-        let newScope = rootContainer.makeChildScope(for: option.moduleType)
+        let newScope = container.makeChildScope(for: option.moduleType)
         activeFintechScope = newScope
         if let updated = try? newScope.resolve(GetFintechDashboardUseCase.self) {
             dashboard = updated
@@ -85,7 +81,7 @@ public final class FintechMockupViewModel: ObservableObject {
     }
 
     public func triggerCreditOfferCTA() {
-        let offer = dashboard.creditOfferVariant
+        guard let offer = dashboard?.creditOfferVariant else { return }
         if offer.isInstantBoostEnabled {
             boostActivatedMessage = "✅ Depósito de \(offer.preapprovedAmountFormatted) acreditado."
         } else {

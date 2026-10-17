@@ -2,40 +2,39 @@
 //  CountryNewsViewModel.swift
 //  MultiCountryNewsDemo · Presentation -> ViewModel (MVVM)
 //
+//  Usa `@Inject` igual que `FeedViewModel`: cero `init` manual y cero `rootContainer.resolve` en el inicializador.
+//
 
 import SwiftUI
 import DaggerSwift
 
 @MainActor
+@Inject
 public final class CountryNewsPortalViewModel: ObservableObject {
-    private let rootContainer: ScopeContainer
-    private let authRepository: any CountryAuthRepositoryProtocol
+    public let authRepository: any CountryAuthRepositoryProtocol
+    public let container: ScopeContainer
+
     private var activeCountryScope: ScopeContainer?
 
     @Published public var selectedCountry: SupportedCountry = .mexico
-    @Published public var currentCopy: LocalizedCountryCopy
-    @Published public var identifierInput: String = ""
+    @Published public var currentCopy: LocalizedCountryCopy = MexicoLocaleProvider().copy
+    @Published public var identifierInput: String = MexicoLocaleProvider().copy.defaultIdentifier
     @Published public var headlines: [NewsArticleItem] = []
     @Published public var isAuthenticated: Bool = false
 
-    public init(rootContainer: ScopeContainer) throws {
-        self.rootContainer = rootContainer
-        self.authRepository = try rootContainer.resolve((any CountryAuthRepositoryProtocol).self)
-
-        let initialScope = rootContainer.makeChildScope(for: MexicoNewsModule.self)
-        self.activeCountryScope = initialScope
-        let locale = try initialScope.resolve((any CountryLocaleProviderProtocol).self)
-        self.currentCopy = locale.copy
-        self.identifierInput = locale.copy.defaultIdentifier
-        Task { await refreshState() }
+    public func loadInitialCountry() async {
+        if activeCountryScope == nil {
+            selectCountry(selectedCountry)
+        } else {
+            await refreshState()
+        }
     }
 
     public func selectCountry(_ country: SupportedCountry) {
         selectedCountry = country
         activeCountryScope?.teardown()
 
-        let countryModule = Self.module(for: country)
-        let newScope = rootContainer.makeChildScope(for: countryModule)
+        let newScope = container.makeChildScope(for: Self.module(for: country))
         activeCountryScope = newScope
 
         if let locale = try? newScope.resolve((any CountryLocaleProviderProtocol).self) {
@@ -64,6 +63,9 @@ public final class CountryNewsPortalViewModel: ObservableObject {
     }
 
     private func refreshState() async {
+        if activeCountryScope == nil {
+            activeCountryScope = container.makeChildScope(for: Self.module(for: selectedCountry))
+        }
         guard let scope = activeCountryScope,
               let useCase = try? scope.resolve(GetLocalizedNewsFeedUseCase.self) else {
             isAuthenticated = false
