@@ -2,19 +2,16 @@
 //  DaggerSwiftTesting.swift
 //  DaggerSwiftTesting
 //
-//  DSL Declarativo (Sugar) para validar la composición de grafos y precondiciones con `import Testing`:
+//  DSL Declarativo (Sugar) para validar la composición de grafos, Fakes y precondiciones con `import Testing`:
+//
+//  ShowcaseCoreModule
+//      .whenResolved((any GitHubRepositoryProtocol).self).returns(FakerGitHubRepository.self)
+//      .resolved(GetProfileUseCase.self)
+//      .resolved(GetRepositoriesUseCase.self)
 //
 //  expectGraph(ShowcaseCoreModule.self, FakerGitHubModule.self)
 //      .resolved(GetProfileUseCase.self)
-//      .resolved(GetRepositoriesUseCase.self)
 //      .resolved(FeedViewModel.self)
-//
-//  expectWhenCondition(ShowcaseCoreModule.self, FakerGitHubModule.self) { (auth: any AuthRepositoryProtocol) in
-//      auth.loginAsSaldivar()
-//  }
-//  .inChildScope(RepoDetailModule.self, binding: repo)
-//  .resolved(ValidatedSession.self)
-//  .resolved(RepoDetailInspector.self)
 //
 
 import Foundation
@@ -29,7 +26,69 @@ public extension Tag {
     @Tag static var businessRule: Self
 }
 
-// MARK: - 2. Puntos de Entrada del DSL Declarativo
+// MARK: - 2. Extensión directa en cualquier `@Module`: `Module.whenResolved(Protocol.self).returns(Fake.self)`
+
+public extension GraphModule {
+    /// Inicia un grafo de prueba para este módulo inyectando un Fake cuando se solicite `ProtocolType`.
+    static func whenResolved<ProtocolType>(_ protocolType: ProtocolType.Type) -> WhenResolvedBuilder<ProtocolType> {
+        let expectation = expectGraph(Self.self)
+        return expectation.whenResolved(protocolType)
+    }
+}
+
+/// Builder intermedio para `whenResolved(Protocol.self).returns(Fake.self)`.
+public struct WhenResolvedBuilder<ProtocolType> {
+    public let expectation: GraphExpectation
+
+    /// Registra un tipo `@Inject` (ej. `FakerGitHubRepository.self`) como respuesta para `ProtocolType`.
+    @discardableResult
+    public func returns<Fake: Injectable>(
+        _ fakeType: Fake.Type,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) -> GraphExpectation {
+        let container = expectation.container
+        container.provideSingleton(ProtocolType.self) {
+            guard let instance = try container.resolve(Fake.self) as? ProtocolType else {
+                Issue.record(
+                    Comment(rawValue: "❌ '\(Fake.self)' no conforma el protocolo '\(ProtocolType.self)'"),
+                    sourceLocation: sourceLocation
+                )
+                throw GraphError.unregisteredDependency(
+                    type: String(reflecting: ProtocolType.self),
+                    searchedFromScope: container.scopeID
+                )
+            }
+            return instance
+        }
+        return expectation
+    }
+
+    /// Alias con backticks por si se escribe `.return(Fake.self)`.
+    @discardableResult
+    public func `return`<Fake: Injectable>(
+        _ fakeType: Fake.Type,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) -> GraphExpectation {
+        returns(fakeType, sourceLocation: sourceLocation)
+    }
+
+    /// Registra una instancia directa (ej. `FakerGitHubRepository()`) como respuesta para `ProtocolType`.
+    @discardableResult
+    public func returns(_ instance: @autoclosure @escaping () -> ProtocolType) -> GraphExpectation {
+        expectation.container.provideSingleton(ProtocolType.self) {
+            instance()
+        }
+        return expectation
+    }
+
+    /// Alias con backticks por si se escribe `.return(FakerGitHubRepository())`.
+    @discardableResult
+    public func `return`(_ instance: @autoclosure @escaping () -> ProtocolType) -> GraphExpectation {
+        returns(instance())
+    }
+}
+
+// MARK: - 3. Puntos de Entrada del DSL Declarativo
 
 /// Inicia la validación declarativa de un grafo compuesto por uno o más `@Module`.
 @discardableResult
@@ -50,7 +109,7 @@ public func expectWhenCondition<D>(
     return expectation.when(sourceLocation: sourceLocation, condition)
 }
 
-// MARK: - 3. Cadena Fluida `GraphExpectation`
+// MARK: - 4. Cadena Fluida `GraphExpectation`
 
 public final class GraphExpectation {
     public let container: ScopeContainer
@@ -59,6 +118,11 @@ public final class GraphExpectation {
     public init(container: ScopeContainer, stepsLog: [String] = []) {
         self.container = container
         self.stepsLog = stepsLog
+    }
+
+    /// Permite encadenar `.whenResolved(Protocol.self).returns(Fake.self)` dentro de `expectGraph(...)`.
+    public func whenResolved<ProtocolType>(_ protocolType: ProtocolType.Type) -> WhenResolvedBuilder<ProtocolType> {
+        WhenResolvedBuilder(expectation: self)
     }
 
     /// Verifica que el tipo `T` se pueda resolver exitosamente en el grafo actual.
