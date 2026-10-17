@@ -163,13 +163,19 @@ struct DaggerSwiftMacrosPlugin {
 
     private static func expandModuleMember(attrSource: String, declSource: String) -> String {
         let clean = stripComments(declSource)
+        let moduleScope = extractModuleScope(from: attrSource)
         let includedModules = extractModuleIncludes(from: attrSource)
         let functions = parseModuleFunctions(from: clean)
 
         var lines: [String] = []
         lines.append("nonisolated public static func register(in container: DaggerSwift.ScopeContainer) {")
 
+        if let moduleScope, !moduleScope.isEmpty {
+            lines.append("    container.addCompatibleScope(\(moduleScope))")
+        }
+
         for included in includedModules {
+            lines.append("    container.addCompatibleScope(\(included).self)")
             lines.append("    \(included).register(in: container)")
         }
 
@@ -210,6 +216,10 @@ struct DaggerSwiftMacrosPlugin {
             case .scoped(let customScope):
                 if let customScope, !customScope.isEmpty {
                     lines.append("    container.provideScoped(in: \(customScope), \(returnTypeSelf)) { \(closureParams)")
+                    lines.append("        \(invocation)")
+                    lines.append("    }")
+                } else if let moduleScope, !moduleScope.isEmpty {
+                    lines.append("    container.provideScoped(in: \(moduleScope), \(returnTypeSelf)) { \(closureParams)")
                     lines.append("        \(invocation)")
                     lines.append("    }")
                 } else {
@@ -450,23 +460,41 @@ struct DaggerSwiftMacrosPlugin {
         return arg
     }
 
+    private static func extractModuleScope(from attrSource: String) -> String? {
+        guard let rawArgs = extractAttributeArgument(from: attrSource), !rawArgs.isEmpty else {
+            return nil
+        }
+        for part in splitByTopLevelComma(rawArgs) {
+            let trimmed = part.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.hasPrefix("scope:") {
+                let value = String(trimmed.dropFirst("scope:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                return value.isEmpty ? nil : value
+            }
+        }
+        return nil
+    }
+
     private static func extractModuleIncludes(from attrSource: String) -> [String] {
-        guard var arg = extractAttributeArgument(from: attrSource), !arg.isEmpty else {
+        guard let rawArgs = extractAttributeArgument(from: attrSource), !rawArgs.isEmpty else {
             return []
         }
-        if let colon = arg.firstIndex(of: ":") {
-            arg = String(arg[arg.index(after: colon)...]).trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        if arg.hasPrefix("[") && arg.hasSuffix("]") {
-            arg = String(arg.dropFirst().dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        return splitByTopLevelComma(arg).compactMap { item in
-            var cleaned = item.trimmingCharacters(in: .whitespacesAndNewlines)
-            if cleaned.hasSuffix(".self") {
-                cleaned = String(cleaned.dropLast(".self".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        for part in splitByTopLevelComma(rawArgs) {
+            var trimmed = part.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.hasPrefix("includes:") {
+                trimmed = String(trimmed.dropFirst("includes:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.hasPrefix("[") && trimmed.hasSuffix("]") {
+                    trimmed = String(trimmed.dropFirst().dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+                return splitByTopLevelComma(trimmed).compactMap { item in
+                    var cleaned = item.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if cleaned.hasSuffix(".self") {
+                        cleaned = String(cleaned.dropLast(".self".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                    }
+                    return cleaned.isEmpty ? nil : cleaned
+                }
             }
-            return cleaned.isEmpty ? nil : cleaned
         }
+        return []
     }
 
     private static func extractPropertyType(from declSource: String) -> String? {

@@ -117,10 +117,20 @@ public macro Precondition(_ reason: String = "Precondición requerida no satisfe
 
 /// Dagger 2: Convierte una estructura o enumeración en un Módulo del Grafo (`GraphScope`, `GraphModule`, `Modulable`)
 /// y genera en tiempo de compilación el registro topológico de sus nodos `@Singleton`, `@Scoped`, `@Provider`, `@BusinessRule` y `@Precondition`.
-/// Soporta `includes: [ModuleV1.self]` para heredar los providers de una versión anterior y sobreescribir únicamente lo que cambia en la nueva versión.
+/// Soporta `includes: [ModuleV1.self]` para heredar los providers y el Scope de una versión anterior (`V1 -> V2`).
 @attached(member, names: arbitrary)
 @attached(extension, conformances: GraphScope, GraphModule, Modulable, names: arbitrary)
 public macro Module(includes: [any GraphModule.Type] = []) = #externalMacro(
+    module: "DaggerSwiftMacros",
+    type: "ModuleMacro"
+)
+
+/// Dagger 2: Variante de `@Module` que asocia el módulo a un `GraphScope` compartido (ej. `@Module(scope: PaymentsScope.self)`
+/// para variantes hermanas como México, Argentina y Colombia), de modo que los hijos con `@Inject(scope: PaymentsScope.self)`
+/// funcionen indistintamente con cualquiera de las variantes activas.
+@attached(member, names: arbitrary)
+@attached(extension, conformances: GraphScope, GraphModule, Modulable, names: arbitrary)
+public macro Module<S: GraphScope>(scope: S.Type, includes: [any GraphModule.Type] = []) = #externalMacro(
     module: "DaggerSwiftMacros",
     type: "ModuleMacro"
 )
