@@ -118,6 +118,15 @@ struct DaggerSwiftMacrosPlugin {
                 expanded = nil
             }
 
+        case "ModulePaletteMacro":
+            if macroRole == "extension" {
+                expanded = extendedType.isEmpty ? nil : "extension \(extendedType): DaggerSwift.GraphScope {}"
+            } else if macroRole == "member" {
+                expanded = expandModulePaletteMember(attrSource: attrSource)
+            } else {
+                expanded = nil
+            }
+
         default:
             expanded = nil
         }
@@ -129,6 +138,56 @@ struct DaggerSwiftMacrosPlugin {
             resultDict["expandedSource"] = expanded
         }
         return ["expandMacroResult": resultDict]
+    }
+
+    private static func expandModulePaletteMember(attrSource: String) -> String {
+        let contractType = extractNamedTypeArgument(label: "of", from: attrSource) ?? "any DaggerSwift.GraphModule"
+        let v0_1Type = extractNamedTypeArgument(label: "v0_1", from: attrSource) ?? "Never"
+        let v1_0Type = extractNamedTypeArgument(label: "v1_0", from: attrSource) ?? "Never"
+        let v2_0Type = extractNamedTypeArgument(label: "v2_0", from: attrSource) ?? "Never"
+
+        return """
+        public typealias Palette = DaggerSwift.ModulePalette
+
+        public static func module(for option: DaggerSwift.ModulePalette) -> \(contractType).Type {
+            switch option {
+            case .v0_1: return \(v0_1Type).self
+            case .v1_0: return \(v1_0Type).self
+            case .v2_0: return \(v2_0Type).self
+            }
+        }
+        """
+    }
+
+    private static func extractNamedTypeArgument(label: String, from attr: String) -> String? {
+        guard let labelRange = attr.range(of: "\(label):") else { return nil }
+        let afterLabel = attr[labelRange.upperBound...]
+        var depth = 0
+        var collected = ""
+        for ch in afterLabel {
+            if ch == "(" || ch == "[" || ch == "<" {
+                depth += 1
+                collected.append(ch)
+            } else if ch == ")" || ch == "]" || ch == ">" {
+                if depth == 0 {
+                    break
+                }
+                depth -= 1
+                collected.append(ch)
+            } else if ch == "," && depth == 0 {
+                break
+            } else {
+                collected.append(ch)
+            }
+        }
+        var trimmed = collected.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasSuffix(".self") {
+            trimmed = String(trimmed.dropLast(5)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if trimmed.hasPrefix("(") && trimmed.hasSuffix(")") {
+            trimmed = String(trimmed.dropFirst().dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     // MARK: - 1. Dagger 1 Accessor Macros (@Singleton(expr) & @Provider(expr) sobre static var)

@@ -40,7 +40,7 @@ public struct FintechMockupFeatureView: View {
         let creditVariant = dashboard.creditOfferVariant
         return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                ForEach(FintechModulePaletteOption.allCases) { option in
+                ForEach(FintechScope.Palette.allCases) { option in
                     let isSelected = viewModel.selectedPalette == option
                     Button {
                         withAnimation(.snappy(duration: 0.25)) {

@@ -2,8 +2,8 @@
 //  CountryNewsViewModel.swift
 //  MultiCountryNewsDemo · Presentation -> ViewModel (MVVM)
 //
-//  Usa únicamente el decorador `@Inject(scope: CountryNewsScope.self)` y los `@Module`s
-//  sin referenciar `ScopeContainer`.
+//  Resolución 100% explícita en tiempo de compilación:
+//  Cero `ScopeContainer`, cero `try!`, cero `try?`.
 //
 
 import SwiftUI
@@ -30,14 +30,12 @@ public final class CountryNewsPortalViewModel: ObservableObject {
     }
 
     public func selectCountry(_ country: SupportedCountry) {
-        Self.module(for: selectedCountry).teardownScope()
         selectedCountry = country
 
         let activeModule = Self.module(for: country)
-        if let locale = try? activeModule.resolve((any CountryLocaleProviderProtocol).self) {
-            currentCopy = locale.copy
-            identifierInput = locale.copy.defaultIdentifier
-        }
+        let locale = activeModule.localeProvider()
+        currentCopy = locale.copy
+        identifierInput = locale.copy.defaultIdentifier
 
         if authRepository.currentSession != nil {
             authRepository.login(identifier: identifierInput, country: country)
@@ -60,17 +58,22 @@ public final class CountryNewsPortalViewModel: ObservableObject {
     }
 
     private func refreshState() async {
-        let activeModule = Self.module(for: selectedCountry)
-        guard let useCase = try? activeModule.resolve(GetLocalizedNewsFeedUseCase.self) else {
+        guard let session = CountryNewsCoreModule.validateCountrySession(auth: authRepository) else {
             isAuthenticated = false
             headlines = []
             return
         }
+        let activeModule = Self.module(for: selectedCountry)
+        let useCase = GetLocalizedNewsFeedUseCase(
+            session: session,
+            localeProvider: activeModule.localeProvider(),
+            newsRepository: activeModule.newsRepository()
+        )
         isAuthenticated = true
         headlines = await useCase.execute()
     }
 
-    private static func module(for country: SupportedCountry) -> any GraphModule.Type {
+    public static func module(for country: SupportedCountry) -> any CountryNewsModuleContract.Type {
         switch country {
         case .mexico: return MexicoNewsModule.self
         case .usa: return USANewsModule.self

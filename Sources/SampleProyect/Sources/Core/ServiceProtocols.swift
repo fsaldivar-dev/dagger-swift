@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import DaggerSwift
 import AppFoundation
 
 public protocol GitHubRepositoryProtocol: Sendable {
@@ -26,4 +27,11 @@ public protocol AuthRepositoryProtocol: Sendable {
 public protocol FeatureFlagRepositoryProtocol: Sendable {
     var isBentoV2Enabled: Bool { get }
     func setBentoV2(_ enabled: Bool)
+}
+
+/// Contrato en tiempo de compilación que todo módulo de servicios de GitHub debe satisfacer.
+public protocol GitHubServiceModuleContract: GraphModule {
+    static func gitHubRepository() -> any GitHubRepositoryProtocol
+    static func authRepository() -> any AuthRepositoryProtocol
+    static func featureFlags() -> any FeatureFlagRepositoryProtocol
 }

@@ -2,32 +2,12 @@
 //  FintechHomeViewModel.swift
 //  FintechMockupDemo · Presentation -> ViewModel (MVVM)
 //
-//  Usa únicamente el decorador `@Inject(scope: FintechScope.self)` y los `@Module`s
-//  sin referenciar `ScopeContainer`.
+//  Usa `FintechScope.Palette` (`ModulePalette` de la librería `DaggerSwift`, estilo `CodingKeys`)
+//  y resolución explícita en compile-time (Cero `ScopeContainer`, cero `try!`, cero `try?`).
 //
 
 import SwiftUI
 import DaggerSwift
-
-public enum FintechModulePaletteOption: String, CaseIterable, Identifiable, Sendable {
-    case v0_1 = "0.1"
-    case v1_0 = "1.0"
-    case v2_0 = "2.0"
-
-    public var id: String { rawValue }
-
-    public var moduleType: any GraphModule.Type {
-        switch self {
-        case .v0_1: return FintechModuleV0_1.self
-        case .v1_0: return FintechModuleV1.self
-        case .v2_0: return FintechModuleV2.self
-        }
-    }
-
-    public var buttonLabel: String {
-        "Module(\(moduleType.moduleVersion))"
-    }
-}
 
 @MainActor
 @Inject(scope: FintechScope.self)
@@ -35,7 +15,7 @@ public final class FintechMockupViewModel: ObservableObject {
     public let initialDashboard: GetFintechDashboardUseCase
     public let flagsRepository: any FintechABFlagsRepositoryProtocol
 
-    @Published public var selectedPalette: FintechModulePaletteOption = .v2_0
+    @Published public var selectedPalette: FintechScope.Palette = .v2_0
     @Published public var isWealthBentoVariantB: Bool = true
     @Published public var isInstantCreditBoostVariantB: Bool = true
     @Published public var dashboard: GetFintechDashboardUseCase?
@@ -52,16 +32,13 @@ public final class FintechMockupViewModel: ObservableObject {
         }
     }
 
-    public func selectPalette(_ option: FintechModulePaletteOption) {
-        selectedPalette.moduleType.teardownScope()
+    public func selectPalette(_ option: FintechScope.Palette) {
         selectedPalette = option
         boostActivatedMessage = nil
-
-        if let updated = try? option.moduleType.resolve(GetFintechDashboardUseCase.self) {
-            dashboard = updated
-            Task {
-                self.transactions = await updated.coreBanking.fetchRecentTransactions()
-            }
+        let updated = Self.makeDashboard(for: option, flags: flagsRepository)
+        dashboard = updated
+        Task {
+            self.transactions = await updated.coreBanking.fetchRecentTransactions()
         }
     }
 
@@ -69,7 +46,7 @@ public final class FintechMockupViewModel: ObservableObject {
         let next = !isWealthBentoVariantB
         isWealthBentoVariantB = next
         flagsRepository.setWealthBentoVariantB(next)
-        refreshDashboardFromGraph()
+        dashboard = Self.makeDashboard(for: selectedPalette, flags: flagsRepository)
     }
 
     public func toggleCreditOfferAB() {
@@ -77,7 +54,7 @@ public final class FintechMockupViewModel: ObservableObject {
         isInstantCreditBoostVariantB = next
         flagsRepository.setInstantCreditBoostVariantB(next)
         boostActivatedMessage = nil
-        refreshDashboardFromGraph()
+        dashboard = Self.makeDashboard(for: selectedPalette, flags: flagsRepository)
     }
 
     public func triggerCreditOfferCTA() {
@@ -89,8 +66,16 @@ public final class FintechMockupViewModel: ObservableObject {
         }
     }
 
-    private func refreshDashboardFromGraph() {
-        guard let updated = try? selectedPalette.moduleType.resolve(GetFintechDashboardUseCase.self) else { return }
-        dashboard = updated
+    public nonisolated static func makeDashboard(
+        for option: FintechScope.Palette,
+        flags: any FintechABFlagsRepositoryProtocol
+    ) -> GetFintechDashboardUseCase {
+        let module = FintechScope.module(for: option)
+        return GetFintechDashboardUseCase(
+            coreBanking: module.coreBanking(),
+            cardEngine: module.cardEngine(),
+            layoutVariant: FintechCoreModule.provideHomeLayoutVariant(flags: flags),
+            creditOfferVariant: FintechCoreModule.provideCreditOfferVariant(flags: flags)
+        )
     }
 }

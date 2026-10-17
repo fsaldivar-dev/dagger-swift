@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import DaggerSwift
 
 public protocol FintechCoreBankingProtocol: Sendable {
     func fetchAccountSummary() -> FintechAccountSummary
@@ -19,4 +20,10 @@ public protocol FintechABFlagsRepositoryProtocol: Sendable {
     var isInstantCreditBoostVariantB: Bool { get }
     func setWealthBentoVariantB(_ enabled: Bool)
     func setInstantCreditBoostVariantB(_ enabled: Bool)
+}
+
+/// Contrato en tiempo de compilación para la familia de módulos `Module(0.1)`, `Module(1.0)` y `Module(2.0)`.
+public protocol FintechModuleContract: GraphModule {
+    static func coreBanking() -> any FintechCoreBankingProtocol
+    static func cardEngine() -> any FintechCardEngineProtocol
 }

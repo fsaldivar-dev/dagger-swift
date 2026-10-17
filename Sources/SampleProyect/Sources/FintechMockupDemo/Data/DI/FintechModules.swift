@@ -33,8 +33,8 @@ public enum FintechSharedFlagsModule {
     }
 }
 
-@Module(0.1, scope: FintechScope.self, includes: [FintechCoreModule.self, FintechSharedFlagsModule.self])
-public enum FintechModuleV0_1 {
+@Module(0.1, scope: FintechScope.self)
+public enum FintechModuleV0_1: FintechModuleContract {
     @Scoped
     public static func coreBanking() -> any FintechCoreBankingProtocol {
         FintechCoreBankingImpl()
@@ -54,6 +54,12 @@ public enum FintechModuleV1 {
     }
 }
 
+extension FintechModuleV1: FintechModuleContract {
+    public static func coreBanking() -> any FintechCoreBankingProtocol {
+        FintechModuleV0_1.coreBanking()
+    }
+}
+
 @Module(2.0, scope: FintechScope.self, includes: [FintechModuleV1.self])
 public enum FintechModuleV2 {
     @Scoped
@@ -61,3 +67,18 @@ public enum FintechModuleV2 {
         FintechCardEngineV2()
     }
 }
+
+extension FintechModuleV2: FintechModuleContract {
+    public static func coreBanking() -> any FintechCoreBankingProtocol {
+        FintechModuleV1.coreBanking()
+    }
+}
+
+/// Sintetiza en compile-time `FintechScope.Palette` (`ModulePalette`) y `FintechScope.module(for:)` (estilo `CodingKeys`).
+@Scope(
+    of: (any FintechModuleContract).self,
+    v0_1: FintechModuleV0_1.self,
+    v1_0: FintechModuleV1.self,
+    v2_0: FintechModuleV2.self
+)
+extension FintechScope {}

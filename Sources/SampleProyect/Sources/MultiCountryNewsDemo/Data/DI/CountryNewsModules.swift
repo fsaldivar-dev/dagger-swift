@@ -2,7 +2,8 @@
 //  CountryNewsModules.swift
 //  MultiCountryNewsDemo · Data -> DI
 //
-//  Módulos de Inyección por País usando la paleta `@Module(1.0, scope: CountryNewsScope.self)`.
+//  Módulos de Inyección por País usando la paleta `@Module(1.0, scope: CountryNewsScope.self)`
+//  y el contrato estático `CountryNewsModuleContract` verificado en tiempo de compilación.
 //
 
 import Foundation
@@ -26,8 +27,8 @@ public enum CountryAuthServiceModule {
     }
 }
 
-@Module(1.0, scope: CountryNewsScope.self, includes: [CountryNewsCoreModule.self, CountryAuthServiceModule.self])
-public enum MexicoNewsModule {
+@Module(1.0, scope: CountryNewsScope.self)
+public enum MexicoNewsModule: CountryNewsModuleContract {
     @Scoped
     public static func localeProvider() -> any CountryLocaleProviderProtocol { MexicoLocaleProvider() }
 
@@ -35,8 +36,8 @@ public enum MexicoNewsModule {
     public static func newsRepository() -> any CountryNewsRepositoryProtocol { MexicoNewsRepository() }
 }
 
-@Module(1.0, scope: CountryNewsScope.self, includes: [CountryNewsCoreModule.self, CountryAuthServiceModule.self])
-public enum USANewsModule {
+@Module(1.0, scope: CountryNewsScope.self)
+public enum USANewsModule: CountryNewsModuleContract {
     @Scoped
     public static func localeProvider() -> any CountryLocaleProviderProtocol { USALocaleProvider() }
 
@@ -44,8 +45,8 @@ public enum USANewsModule {
     public static func newsRepository() -> any CountryNewsRepositoryProtocol { USANewsRepository() }
 }
 
-@Module(1.0, scope: CountryNewsScope.self, includes: [CountryNewsCoreModule.self, CountryAuthServiceModule.self])
-public enum BrazilNewsModule {
+@Module(1.0, scope: CountryNewsScope.self)
+public enum BrazilNewsModule: CountryNewsModuleContract {
     @Scoped
     public static func localeProvider() -> any CountryLocaleProviderProtocol { BrazilLocaleProvider() }
 
@@ -53,8 +54,8 @@ public enum BrazilNewsModule {
     public static func newsRepository() -> any CountryNewsRepositoryProtocol { BrazilNewsRepository() }
 }
 
-@Module(1.0, scope: CountryNewsScope.self, includes: [CountryNewsCoreModule.self, CountryAuthServiceModule.self])
-public enum FranceNewsModule {
+@Module(1.0, scope: CountryNewsScope.self)
+public enum FranceNewsModule: CountryNewsModuleContract {
     @Scoped
     public static func localeProvider() -> any CountryLocaleProviderProtocol { FranceLocaleProvider() }
 
