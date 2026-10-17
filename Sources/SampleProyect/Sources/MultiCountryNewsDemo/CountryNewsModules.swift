@@ -12,7 +12,6 @@
 import Foundation
 import DaggerSwift
 import AppFoundation
-import Core
 
 @Inject
 public final class CountryAuthRepositoryImpl: CountryAuthRepositoryProtocol, @unchecked Sendable {

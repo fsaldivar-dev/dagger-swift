@@ -135,6 +135,22 @@ public macro Module<S: GraphScope>(scope: S.Type, includes: [any GraphModule.Typ
     type: "ModuleMacro"
 )
 
+/// Dagger 2: Declara un `@Module` con versión explícita en la paleta del grafo: `@Module(0.1)`, `@Module(1.0)`, `@Module(2.0)`.
+@attached(member, names: arbitrary)
+@attached(extension, conformances: GraphScope, GraphModule, Modulable, names: arbitrary)
+public macro Module(_ version: Double, includes: [any GraphModule.Type] = []) = #externalMacro(
+    module: "DaggerSwiftMacros",
+    type: "ModuleMacro"
+)
+
+/// Dagger 2: Declara un `@Module` con versión explícita (`@Module(0.1, scope: ...)`, `@Module(1.0, scope: ...)`, `@Module(2.0, scope: ...)`).
+@attached(member, names: arbitrary)
+@attached(extension, conformances: GraphScope, GraphModule, Modulable, names: arbitrary)
+public macro Module<S: GraphScope>(_ version: Double, scope: S.Type, includes: [any GraphModule.Type] = []) = #externalMacro(
+    module: "DaggerSwiftMacros",
+    type: "ModuleMacro"
+)
+
 /// Dagger 2: Genera automáticamente el `init` limpio (para Unit Tests sin grafo) y el cableado de resolución en el grafo.
 @attached(member, names: arbitrary)
 @attached(extension, conformances: Injectable, names: arbitrary)

@@ -9,7 +9,6 @@
 import SwiftUI
 import DaggerSwift
 import AppFoundation
-import Core
 
 @MainActor
 public final class CountryNewsPortalViewModel: ObservableObject {

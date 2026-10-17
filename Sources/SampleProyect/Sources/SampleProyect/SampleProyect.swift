@@ -2,13 +2,13 @@
 //  SampleProyect.swift
 //  SampleProyect
 //
-//  Arquitectura Modular SPM en 4 Capas Reales + DaggerSwift v2:
+//  Arquitectura Modular SPM + Targets de Demos Reales con DaggerSwift v2:
 //
-//  1. AppFoundation : Modelos compartidos (GitHubUserProfile, GitHubRepoItem) y Theme.
-//  2. Core          : Contratos (Protocols), UseCases (@Inject), @Precondition y @BusinessRule.
-//  3. Services      : Implementaciones Live/Faker y @Module de entornos.
-//  4. Features      : Vistas y ViewModels MVVM (@Inject) desacoplados de Services.
-//  5. SampleProyect : Punto de composición de la aplicación (ShowcaseRootView).
+//  - AppFoundation        : Modelos base y Design System.
+//  - Core / Services / Features : Demo de Perfil Social GitHub (@fsaldivar-dev).
+//  - MultiCountryNewsDemo : Demo 1 (Login Multi-Country + Home de Noticias en ES, EN, PT, FR).
+//  - FintechMockupDemo    : Demo 2 (App Mockup Fintech con Paleta Module(0.1), Module(1.0), Module(2.0) y A/B Flags).
+//  - SampleProyect        : Launcher interactivo con botones para elegir qué Demo App probar.
 //
 
 @_exported import Foundation
@@ -18,3 +18,5 @@
 @_exported import Core
 @_exported import Services
 @_exported import Features
+@_exported import MultiCountryNewsDemo
+@_exported import FintechMockupDemo
