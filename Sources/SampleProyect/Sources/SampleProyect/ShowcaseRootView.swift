@@ -2,20 +2,16 @@
 //  ShowcaseRootView.swift
 //  SampleProyect
 //
-//  Launcher Interactivo con Botones para elegir qué Demo App probar al compilar la App:
-//  1. Multi-Country Login + News Home (MX, US, BR, FR en 4 idiomas)
-//  2. Fintech Mockup Home (Paleta Module(0.1), Module(1.0), Module(2.0) + A/B Flags)
-//  3. GitHub Developer Feed (@fsaldivar-dev + Sub-Scope de Detalle)
+//  Vista Raíz desacoplada (Cumple SOLID):
+//  - SRP: Solo presenta el menú de navegación de las Demos; no instancia UseCases, Repositorios ni ViewModels.
+//  - OCP / DIP: Recibe un `any ShowcaseComposerProtocol` intercambiable en cualquier momento
+//    (por ejemplo `ShowcaseAppComposer<LiveGitHubModule>()` o `ShowcaseAppComposer<LiveGitHubModuleV2>()`).
 //
 
 import SwiftUI
-import DaggerSwift
 import AppFoundation
 import Core
 import Services
-import Features
-import MultiCountryNewsDemo
-import FintechMockupDemo
 
 public enum ShowcaseDemoTab: Int, CaseIterable, Identifiable, Sendable {
     case multiCountryNews = 0
@@ -26,43 +22,25 @@ public enum ShowcaseDemoTab: Int, CaseIterable, Identifiable, Sendable {
 }
 
 public struct ShowcaseRootView: View {
+    @State private var composer: any ShowcaseComposerProtocol
     @State private var activeDemo: ShowcaseDemoTab?
-    @StateObject private var countryNewsVM: CountryNewsPortalViewModel
-    @StateObject private var fintechVM: FintechMockupViewModel
-    @StateObject private var githubFeedVM: FeedViewModel
+    @State private var useLoginV2Composer: Bool = false
 
     public init(
-        environment: any GitHubServiceModuleContract.Type = LiveGitHubModule.self,
+        composer: any ShowcaseComposerProtocol = ShowcaseAppComposer<LiveGitHubModule>(),
         initialTab: ShowcaseDemoTab? = nil
     ) {
+        self._composer = State(initialValue: composer)
         self._activeDemo = State(initialValue: initialTab)
+    }
 
-        // 1. Demo 1: Multi-Country Login + News (Compilación explícita, cero try!)
-        _countryNewsVM = StateObject(
-            wrappedValue: CountryNewsPortalViewModel(
-                authRepository: CountryAuthServiceModule.countryAuthRepository(),
-                initialLocale: MexicoNewsModule.localeProvider()
-            )
-        )
-
-        // 2. Demo 2: Fintech Mockup (Paleta Module(0.1 / 1.0 / 2.0) + A/B Flags, cero try!)
-        let fintechFlags = FintechSharedFlagsModule.abFlagsRepository()
-        _fintechVM = StateObject(
-            wrappedValue: FintechMockupViewModel(
-                initialDashboard: FintechMockupViewModel.makeDashboard(for: .v2_0, flags: fintechFlags),
-                flagsRepository: fintechFlags
-            )
-        )
-
-        // 3. Demo 3: GitHub Social Developer Profile (Compilación explícita, cero try!)
-        let gitHubRepo = environment.gitHubRepository()
-        _githubFeedVM = StateObject(
-            wrappedValue: FeedViewModel(
-                getProfileUseCase: GetProfileUseCase(gitHubRepository: gitHubRepo),
-                getRepositoriesUseCase: GetRepositoriesUseCase(gitHubRepository: gitHubRepo),
-                authRepository: environment.authRepository(),
-                flagRepository: environment.featureFlags()
-            )
+    public init<M: GitHubServiceModuleContract>(
+        environment: M.Type,
+        initialTab: ShowcaseDemoTab? = nil
+    ) {
+        self.init(
+            composer: ShowcaseAppComposer<M>(),
+            initialTab: initialTab
         )
     }
 
@@ -78,7 +56,7 @@ public struct ShowcaseRootView: View {
         }
     }
 
-    // MARK: - Pantalla Inicial con Botones para elegir qué Demo App probar
+    // MARK: - Selector de Demos + Switch de Composer en Vivo
 
     private var demoLauncherMenu: some View {
         NavigationStack {
@@ -87,14 +65,15 @@ public struct ShowcaseRootView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("DaggerSwift v2 · Demo Apps")
                             .font(.largeTitle.weight(.heavy))
-                        Text("Selecciona qué aplicación demo quieres abrir para probar sus módulos, variantes y reglas de negocio:")
+                        Text("Selecciona qué aplicación demo quieres abrir. Cada flujo es ensamblado por su propio Composer siguiendo Clean Architecture + MVVM:")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
-                    .padding(.bottom, 4)
+
+                    composerSwitcherBanner
 
                     demoLauncherButton(
-                        badge: "TARGET: MultiCountryNewsDemo",
+                        badge: "COMPOSER: CountryNewsComposer",
                         title: "1. Login Multi-Country + Noticias",
                         subtitle: "Variantes hermanas 🇲🇽 Español, 🇺🇸 English, 🇧🇷 Português y 🇫🇷 Français con @Module(scope:) y @Precondition de sesión.",
                         icon: "globe.americas.fill",
@@ -106,9 +85,9 @@ public struct ShowcaseRootView: View {
                     }
 
                     demoLauncherButton(
-                        badge: "TARGET: FintechMockupDemo · Module(0.1 / 1.0 / 2.0)",
+                        badge: "COMPOSER: FintechComposer · @Scope(0.1 / 1.0 / 2.0)",
                         title: "2. App Mockup de Fintech (Variantes + A/B)",
-                        subtitle: "Paleta interactiva @Module(0.1), @Module(1.0) y @Module(2.0) con includes + 2 switches A/B de @BusinessRule en la Home.",
+                        subtitle: "Paleta @Scope sintetizada (Module(0.1), Module(1.0), Module(2.0)) + switches A/B de @BusinessRule en la Home.",
                         icon: "creditcard.and.123",
                         gradient: [Color.purple, Color.indigo]
                     ) {
@@ -118,9 +97,9 @@ public struct ShowcaseRootView: View {
                     }
 
                     demoLauncherButton(
-                        badge: "TARGETS: Core + Services + Features",
+                        badge: "COMPOSER: GitHubFeedComposer · \(composer.composerTitle)",
                         title: "3. GitHub Developer Profile (@fsaldivar-dev)",
-                        subtitle: "Feed social de repositorios conectado a GitHub REST API con Sub-Scope de detalle y auditoría de memoria ARC.",
+                        subtitle: "Feed social de repositorios conectado a GitHub REST API con Sub-Scope de detalle.",
                         icon: "person.crop.circle.badge.checkmark",
                         gradient: [Color.teal, Color.blue]
                     ) {
@@ -136,6 +115,39 @@ public struct ShowcaseRootView: View {
             .navigationBarTitleDisplayMode(.inline)
             #endif
         }
+    }
+
+    private var composerSwitcherBanner: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Composer Activo: \(composer.composerTitle)")
+                    .font(.caption.weight(.bold).monospaced())
+                    .foregroundStyle(.indigo)
+                Text("Puedes cambiar el Composer inicial en caliente (Login V1 vs OAuth V2):")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button {
+                useLoginV2Composer.toggle()
+                composer = useLoginV2Composer
+                    ? ShowcaseAppComposer<LiveGitHubModuleV2>()
+                    : ShowcaseAppComposer<LiveGitHubModule>()
+            } label: {
+                Text(useLoginV2Composer ? "Usando V2" : "Cambiar a V2")
+                    .font(.caption2.weight(.bold))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Capsule().fill(Color.indigo.opacity(0.14)))
+                    .foregroundStyle(.indigo)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.showcaseCardBackground)
+        )
     }
 
     private func demoLauncherButton(
@@ -178,16 +190,6 @@ public struct ShowcaseRootView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.leading)
-
-                HStack {
-                    Spacer()
-                    Text("Abrir Demo App →")
-                        .font(.caption.weight(.bold))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(Capsule().fill(Color.indigo.opacity(0.12)))
-                        .foregroundStyle(.indigo)
-                }
             }
             .padding(18)
             .background(
@@ -203,7 +205,7 @@ public struct ShowcaseRootView: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - Barra Superior para regresar al Selector o cambiar de Demo en un toque
+    // MARK: - Barra Superior
 
     private func topDemoSwitcherBar(current: ShowcaseDemoTab) -> some View {
         HStack(spacing: 8) {
@@ -261,17 +263,17 @@ public struct ShowcaseRootView: View {
     private func selectedDemoView(for demo: ShowcaseDemoTab) -> some View {
         switch demo {
         case .multiCountryNews:
-            CountryNewsFeatureView(viewModel: countryNewsVM)
+            composer.composeCountryNewsDemo()
         case .fintechAB:
             NavigationStack {
-                FintechMockupFeatureView(viewModel: fintechVM)
+                composer.composeFintechDemo()
                     .navigationTitle("2. Fintech A/B & Module(0.1/1.0/2.0)")
                     #if os(iOS)
                     .navigationBarTitleDisplayMode(.inline)
                     #endif
             }
         case .githubFeed:
-            FeedView(viewModel: githubFeedVM)
+            composer.composeGitHubFeedDemo()
         }
     }
 }

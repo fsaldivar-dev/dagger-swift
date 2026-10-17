@@ -2,8 +2,8 @@
 //  CountryNewsViewModel.swift
 //  MultiCountryNewsDemo · Presentation -> ViewModel (MVVM)
 //
-//  Resolución 100% explícita en tiempo de compilación:
-//  Cero `ScopeContainer`, cero `try!`, cero `try?`.
+//  Cumple SRP y DIP (SOLID): depende únicamente de abstracciones (`CountryAuthRepositoryProtocol`,
+//  `CountryNewsComposing`) inyectadas con `@Inject`. No conoce `MexicoNewsModule`, `USANewsModule`, etc.
 //
 
 import SwiftUI
@@ -13,11 +13,12 @@ import DaggerSwift
 @Inject(scope: CountryNewsScope.self)
 public final class CountryNewsPortalViewModel: ObservableObject {
     public let authRepository: any CountryAuthRepositoryProtocol
+    public let composer: any CountryNewsComposing
     public let initialLocale: any CountryLocaleProviderProtocol
 
     @Published public var selectedCountry: SupportedCountry = .mexico
     @Published public var currentCopy: LocalizedCountryCopy = MexicoLocaleProvider().copy
-    @Published public var identifierInput: String = MexicoLocaleProvider().copy.defaultIdentifier
+    @Published public var identifierInput: String = ""
     @Published public var headlines: [NewsArticleItem] = []
     @Published public var isAuthenticated: Bool = false
 
@@ -32,8 +33,7 @@ public final class CountryNewsPortalViewModel: ObservableObject {
     public func selectCountry(_ country: SupportedCountry) {
         selectedCountry = country
 
-        let activeModule = Self.module(for: country)
-        let locale = activeModule.localeProvider()
+        let locale = composer.resolveLocale(for: country)
         currentCopy = locale.copy
         identifierInput = locale.copy.defaultIdentifier
 
@@ -58,27 +58,12 @@ public final class CountryNewsPortalViewModel: ObservableObject {
     }
 
     private func refreshState() async {
-        guard let session = CountryNewsCoreModule.validateCountrySession(auth: authRepository) else {
+        guard let useCase = composer.resolveNewsUseCase(for: selectedCountry, auth: authRepository) else {
             isAuthenticated = false
             headlines = []
             return
         }
-        let activeModule = Self.module(for: selectedCountry)
-        let useCase = GetLocalizedNewsFeedUseCase(
-            session: session,
-            localeProvider: activeModule.localeProvider(),
-            newsRepository: activeModule.newsRepository()
-        )
         isAuthenticated = true
         headlines = await useCase.execute()
-    }
-
-    public static func module(for country: SupportedCountry) -> any CountryNewsModuleContract.Type {
-        switch country {
-        case .mexico: return MexicoNewsModule.self
-        case .usa: return USANewsModule.self
-        case .brazil: return BrazilNewsModule.self
-        case .france: return FranceNewsModule.self
-        }
     }
 }

@@ -7,10 +7,10 @@ import SwiftUI
 import AppFoundation
 
 public struct FintechMockupFeatureView: View {
-    @ObservedObject private var viewModel: FintechMockupViewModel
+    @StateObject private var viewModel: FintechMockupViewModel
 
     public init(viewModel: FintechMockupViewModel) {
-        self.viewModel = viewModel
+        self._viewModel = StateObject(wrappedValue: viewModel)
     }
 
     public var body: some View {
