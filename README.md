@@ -593,6 +593,96 @@ public final class AppCoordinator {
 
 ---
 
+### 2.7 Pureza en la UI: Inmunidad al Vendor Lock-In, Previews Nativas y Taxonomía de Estados
+
+Un principio no negociable en Clean Architecture es que **la capa de presentación (UI) jamás debe acoplarse a un framework de Inyección de Dependencias**.
+
+#### 1. La Regla de Oro: Las Vistas NO hacen `import DaggerSwift`
+
+Tentar al desarrollador con modificadores como `.daggerScope(MyScope.self)` o `.daggerPreview(...)` dentro de las vistas de SwiftUI es un **antipatrón grave**:
+* **Acoplamiento Directo (Vendor Lock-In):** Si la librería de DI se rompe, se depreca o se sustituye en el futuro, tendrías que modificar o reescribir **cada una de las vistas** de la aplicación.
+* **Invasión de Responsabilidades:** Una vista de SwiftUI solo debe saber cómo renderizar su estado y emitir eventos de interacción. Jamás debe gestionar el ciclo de vida de un contenedor de memoria.
+
+> [!IMPORTANT]
+> **En DaggerSwift v2:** Los archivos de vistas (`*View.swift`) **nunca importan `DaggerSwift`**. Solo usan constructores de Swift puro (`init(viewModel:)` o `init(useCase:)`).
+
+#### 2. Previews Nativas de SwiftUI en Milisegundos
+
+Al usar inyección por constructor estándar, las Previews de Xcode compilan y renderizan de forma **100% nativa**, sin inicializar contenedores, sin `@TaskLocal` y sin overrides globales:
+
+```swift
+// LoansFeatureView.swift
+// ⚠️ Observa: ¡CERO imports de DaggerSwift!
+import SwiftUI
+
+public struct LoansFeatureView: View {
+    @State private var viewModel: LoansViewModel
+
+    public init(viewModel: LoansViewModel) {
+        _viewModel = State(initialValue: viewModel)
+    }
+
+    public var body: some View {
+        VStack(spacing: 16) {
+            Text("Saldo Disponible: $\(viewModel.balance)")
+            Button("Solicitar Crédito") {
+                viewModel.applyForLoan()
+            }
+        }
+    }
+}
+
+// ✅ Previews nativas con Mocks por constructor:
+#Preview("Usuario con Préstamo Activo") {
+    LoansFeatureView(viewModel: LoansViewModel(
+        useCase: MockLoansUseCase(balance: 15_000)
+    ))
+}
+
+#Preview("Usuario Sin Préstamos") {
+    LoansFeatureView(viewModel: LoansViewModel(
+        useCase: MockLoansUseCase(balance: 0)
+    ))
+}
+```
+
+#### 3. El Ciclo de Vida del Scope Pertenece al `AppCoordinator`, No a la Vista
+
+¿Por qué no usamos un cache débil automático (`@WeakShared` o `.shared` de Factory)?
+* **Limitación Técnica de Swift:** Los caches débiles (`weak`) **solo funcionan con clases (`class: AnyObject`)**. Fallan rotundamente con tipos por valor (`struct`), tuplas o `actor`.
+* **Riesgo Crítico de Pérdida de Estado:** En transiciones de navegación entre pantallas secundarias, si durante 1 frame o milisegundo ninguna vista retiene el servicio, **ARC purga la instancia débil**, perdiendo el estado en memoria de forma silenciosa e impredecible.
+* **Control Determinístico:** El ciclo de vida de un scope (`teardownScope()`) no debe dejarse al azar del recolector de basura. El `AppCoordinator` abre el scope cuando entra al flujo y lo destruye de forma explícita y auditada al terminar el flujo.
+
+```swift
+// LoansCoordinator.swift
+@MainActor
+public final class LoansCoordinator {
+    public var currentSheet: AnyView?
+
+    public func finishLoansFlow() {
+        // 1. Cierra la pantalla en la UI:
+        self.currentSheet = nil
+        
+        // 2. Destruye el Scope de Memoria (Solo el Coordinator conoce el Scope):
+        let leaks = FintechScope.teardownScope()
+        assert(leaks.isEmpty, "Fuga detectada al salir de Loans: \(leaks)")
+    }
+}
+```
+
+#### 4. Taxonomía de Estados (`States`) y sus Fronteras Reales
+
+Para no mezclar el estado de la UI con el estado del negocio ni con las dependencias:
+
+| Tipo de Estado | ¿Dónde vive en RAM? | ¿Quién lo gestiona? | ¿Conoce `DaggerSwift`? |
+| :--- | :--- | :--- | :---: |
+| **1. UI State** | `@State`, `@FocusState` | La Vista de SwiftUI | ❌ **No**. Swift nativo efímero. |
+| **2. Feature State** | `@Observable ViewModel` | La Vista lo retiene, el `RootComposer` lo ensambla | ❌ **No**. Recibe UseCases en su `init`. |
+| **3. Session State** | `UserSession`, `AuthTokens` | En el Grafo (`@Scoped`) con `@Precondition` | ✅ **Sí** (`SessionScope`). Muere al Logout. |
+| **4. Global State** | Remote Config, Theme, Network | En el Grafo (`@Singleton`) | ✅ **Sí** (`GlobalScope`). Vive con la App. |
+
+---
+
 ## 3. 🧪 Manual Completo de Pruebas (`DaggerSwiftTesting` + Unit Tests + Linter)
 
 DaggerSwift v2 está diseñado para probar tu aplicación en **3 niveles complementarios**:

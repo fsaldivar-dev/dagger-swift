@@ -158,6 +158,41 @@ sequenceDiagram
     Coord->>Loans: Navega a LoansFeatureView
 ```
 
+### 2.4 Pureza de la UI: Inmunidad al Vendor Lock-In, Previews Nativas y Taxonomía de Estados
+
+Un principio no negociable en Clean Architecture es que **la capa de presentación (UI) jamás debe acoplarse a un framework de Inyección de Dependencias**.
+
+#### 1. La Regla de Oro: Las Vistas NO hacen `import DaggerSwift`
+Tentar al desarrollador con modificadores de conveniencia como `.daggerScope(MyScope.self)` o `.daggerPreview(...)` dentro de las vistas de SwiftUI es un **antipatrón grave**:
+* **Acoplamiento Directo (Vendor Lock-In):** Si la librería de DI se rompe, se depreca o se sustituye en el futuro, tendrías que modificar o reescribir **cada una de las vistas** de la aplicación.
+* **Invasión de Responsabilidades:** Una vista de SwiftUI solo debe saber cómo renderizar su estado y emitir eventos de interacción. Jamás debe gestionar el ciclo de vida de un contenedor de memoria.
+* **En DaggerSwift v2:** Los archivos de vistas (`*View.swift`) **nunca importan `DaggerSwift`**. Solo usan constructores de Swift puro (`init(viewModel:)` o `init(useCase:)`).
+
+#### 2. Previews Nativas de SwiftUI en Milisegundos
+Al usar inyección por constructor estándar, las Previews de Xcode compilan y renderizan de forma **100% nativa**, sin inicializar contenedores, sin `@TaskLocal` y sin overrides globales:
+```swift
+// ✅ Previews nativas en Swift puro sin importar DaggerSwift:
+#Preview("Usuario con Préstamo Activo") {
+    LoansFeatureView(viewModel: LoansViewModel(
+        useCase: MockLoansUseCase(balance: 15_000)
+    ))
+}
+```
+
+#### 3. El Ciclo de Vida del Scope Pertenece al `AppCoordinator`, No a la Vista
+¿Por qué no usamos un cache débil automático (`@WeakShared` o `.shared` de Factory)?
+* **Limitación Técnica de Swift:** Los caches débiles (`weak`) **solo funcionan con clases (`class: AnyObject`)**. Fallan rotundamente con tipos por valor (`struct`), tuplas o `actor`.
+* **Riesgo Crítico de Pérdida de Estado:** En transiciones de navegación entre pantallas secundarias, si durante 1 frame o milisegundo ninguna vista retiene el servicio, **ARC purga la instancia débil**, perdiendo el estado en memoria de forma silenciosa e impredecible.
+* **Control Determinístico:** El ciclo de vida de un scope (`teardownScope()`) no debe dejarse al azar del recolector de basura. El `AppCoordinator` abre el scope cuando entra al flujo y lo destruye de forma explícita y auditada al terminar el flujo.
+
+#### 4. Taxonomía de Estados (`States`) y sus Fronteras Reales
+| Tipo de Estado | ¿Dónde vive en RAM? | ¿Quién lo gestiona? | ¿Conoce `DaggerSwift`? |
+| :--- | :--- | :--- | :---: |
+| **1. UI State** | `@State`, `@FocusState` | La Vista de SwiftUI | ❌ **No**. Swift nativo efímero. |
+| **2. Feature State** | `@Observable ViewModel` | La Vista lo retiene, el `RootComposer` lo ensambla | ❌ **No**. Recibe UseCases en su `init`. |
+| **3. Session State** | `UserSession`, `AuthTokens` | En el Grafo (`@Scoped`) con `@Precondition` | ✅ **Sí** (`SessionScope`). Muere al Logout. |
+| **4. Global State** | Remote Config, Theme, Network | En el Grafo (`@Singleton`) | ✅ **Sí** (`GlobalScope`). Vive con la App. |
+
 ---
 
 ## Capítulo 3: Debate Cara a Cara contra las Librerías Reales (`Point-Free TCA`, `Factory`, `Swinject`)
