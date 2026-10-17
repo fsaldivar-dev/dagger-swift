@@ -25,16 +25,22 @@ public enum RepoDetailModule {
 }
 
 @Inject(scope: RepoDetailModule.self)
-public final class RepoDetailInspector: ScopeDisposable, @unchecked Sendable {
+public final class RepoDetailInspector: ScopeDisposable, Sendable {
     public let session: ValidatedSession
     public let repo: GitHubRepoItem
     public let gitHubRepository: any GitHubRepositoryProtocol
 
     public let instanceID = "Inspector-" + String(UUID().uuidString.prefix(4))
-    public private(set) var isDisposed = false
+    @MainActor private var disposedState: Bool = false
+
+    public var isDisposed: Bool {
+        MainActor.assumeIsolated { disposedState }
+    }
 
     public func onScopeTeardown() {
-        isDisposed = true
+        MainActor.assumeIsolated {
+            disposedState = true
+        }
     }
 }
 

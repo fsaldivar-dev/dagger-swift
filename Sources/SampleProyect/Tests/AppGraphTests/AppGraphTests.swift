@@ -36,10 +36,10 @@ enum FakerGitHubModule {
 // MARK: - Suite de Pruebas del Grafo de Dependencias
 
 @Suite("2. Pruebas del Grafo de Dependencias (Demos 1, 2 y 3)")
+@MainActor
 struct AppGraphTests {
 
     @Test("Inyectar Fakes al vuelo con whenResolved(...).returns(Fake.self)", .tags(.graph))
-    @MainActor
     func testWhenResolvedReturnsFake() {
         expectGraph(ShowcaseCoreModule.self, LiveGitHubModule.self)
             .whenResolved((any GitHubRepositoryProtocol).self).returns(FakerGitHubRepository.self)
@@ -49,7 +49,6 @@ struct AppGraphTests {
     }
 
     @Test("Composición completa con módulos: expectGraph(...).resolved(...)", .tags(.graph))
-    @MainActor
     func testComposicionFlujoPrincipal() {
         expectGraph(ShowcaseCoreModule.self, FakerGitHubModule.self)
             .matchesContract(of: LiveGitHubModule.self)
@@ -113,7 +112,7 @@ struct AppGraphTests {
                 auth.login(identifier: "+52 55 8421 0900", country: .mexico)
             }
             .dependency(GetLocalizedNewsFeedUseCase.self).resolved {
-                $0.copy.languageCode == "es-MX" && !$0.headlines.isEmpty
+                $0.copy.languageCode == "es-MX" && $0.copy.breakingTag == "ÚLTIMA HORA"
             }
 
         expectWhenCondition(CountryNewsCoreModule.self, CountryAuthServiceModule.self, USANewsModule.self) { (auth: any CountryAuthRepositoryProtocol) in

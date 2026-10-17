@@ -9,14 +9,15 @@ import Foundation
 import AppFoundation
 import Core
 
-public final class LiveGitHubRepository: GitHubRepositoryProtocol, Sendable {
-    public let environmentTitle: String = "LIVE · GitHub API"
-    public let isFakerEnvironment: Bool = false
+import DaggerSwift
+
+@Inject
+public actor LiveGitHubRepository: GitHubRepositoryProtocol {
+    public nonisolated let environmentTitle: String = "LIVE · GitHub API"
+    public nonisolated let isFakerEnvironment: Bool = false
 
     public static var flagshipDaggerRepo: GitHubRepoItem { GitHubRepoItem.flagshipDaggerRepo }
     public static var curatedRepositories: [GitHubRepoItem] { GitHubRepoItem.curatedRepositories }
-
-    public init() {}
 
     private struct GitHubAPIUserDTO: Decodable {
         let login: String
