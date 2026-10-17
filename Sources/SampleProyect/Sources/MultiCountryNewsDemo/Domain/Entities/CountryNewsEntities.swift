@@ -1,11 +1,26 @@
 //
-//  CountryNewsModels.swift
-//  AppFoundation
-//
-//  Demo 1 · Modelos para Login Multi-Country y Home de Noticias Multi-Idioma.
+//  CountryNewsEntities.swift
+//  MultiCountryNewsDemo · Domain -> Entities
 //
 
 import Foundation
+import DaggerSwift
+
+/// Scope compartido por las variantes hermanas de país (México, USA, Brasil, Francia).
+public enum CountryNewsScope: GraphScope {}
+
+/// Precondición de Dominio: exige sesión activa en el país antes de resolver las noticias.
+public struct AuthenticatedCountrySession: Precondition, Sendable, Equatable {
+    public let country: SupportedCountry
+    public let userIdentifier: String
+    public let sessionToken: String
+
+    public init(country: SupportedCountry, userIdentifier: String, sessionToken: String) {
+        self.country = country
+        self.userIdentifier = userIdentifier
+        self.sessionToken = sessionToken
+    }
+}
 
 public enum SupportedCountry: String, CaseIterable, Identifiable, Sendable {
     case mexico = "MX"
@@ -26,10 +41,10 @@ public enum SupportedCountry: String, CaseIterable, Identifiable, Sendable {
 
     public var displayName: String {
         switch self {
-        case .mexico: return "México (ES)"
-        case .usa: return "USA (EN)"
-        case .brazil: return "Brasil (PT)"
-        case .france: return "France (FR)"
+        case .mexico: return "México"
+        case .usa: return "USA"
+        case .brazil: return "Brasil"
+        case .france: return "France"
         }
     }
 }

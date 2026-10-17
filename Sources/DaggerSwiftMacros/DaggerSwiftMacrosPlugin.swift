@@ -290,9 +290,9 @@ struct DaggerSwiftMacrosPlugin {
             lines.append("")
         }
 
-        let isClass = clean.contains("class ")
+        let isClassType = clean.contains("class ")
         let isMainActor = clean.contains("@MainActor")
-        let initModifier = isClass ? "public convenience init" : "public init"
+        let initModifier = isClassType ? "public convenience init" : "public init"
         let resolveArgs = initParams.map { p in
             let label = p.externalLabel == "_" ? "" : "\(p.externalLabel): "
             let typeSelf = p.type.contains(" ") ? "(\(p.type)).self" : "\(p.type).self"

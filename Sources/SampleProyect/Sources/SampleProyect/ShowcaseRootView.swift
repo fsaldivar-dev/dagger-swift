@@ -42,14 +42,7 @@ public struct ShowcaseRootView: View {
             CountryNewsCoreModule.self,
             CountryAuthServiceModule.self
         ])
-        let countryVM = try! CountryNewsPortalViewModel(rootContainer: countryRoot) { country in
-            switch country {
-            case .mexico: return MexicoNewsModule.self
-            case .usa: return USANewsModule.self
-            case .brazil: return BrazilNewsModule.self
-            case .france: return FranceNewsModule.self
-            }
-        }
+        let countryVM = try! CountryNewsPortalViewModel(rootContainer: countryRoot)
         _countryNewsVM = StateObject(wrappedValue: countryVM)
 
         // 2. Grafo Demo 2: Fintech Mockup (Paleta Module(0.1), Module(1.0), Module(2.0) + A/B Flags)
