@@ -22,8 +22,22 @@ public protocol FintechABFlagsRepositoryProtocol: Sendable {
     func setInstantCreditBoostVariantB(_ enabled: Bool)
 }
 
-/// Contrato en tiempo de compilación para la familia de módulos `Module(0.1)`, `Module(1.0)` y `Module(2.0)`.
+/// Contrato en tiempo de compilación para la familia Plug & UnPlug `Module(0.1)`, `Module(1.0)` y `Module(2.0)`.
 public protocol FintechModuleContract: GraphModule {
     static func coreBanking() -> any FintechCoreBankingProtocol
     static func cardEngine() -> any FintechCardEngineProtocol
+}
+
+public extension FintechModuleContract {
+    static func makeDashboardUseCase(
+        layoutVariant: any FintechHomeLayoutVariantProtocol,
+        creditOfferVariant: any FintechCreditOfferVariantProtocol
+    ) -> GetFintechDashboardUseCase {
+        GetFintechDashboardUseCase(
+            coreBanking: coreBanking(),
+            cardEngine: cardEngine(),
+            layoutVariant: layoutVariant,
+            creditOfferVariant: creditOfferVariant
+        )
+    }
 }

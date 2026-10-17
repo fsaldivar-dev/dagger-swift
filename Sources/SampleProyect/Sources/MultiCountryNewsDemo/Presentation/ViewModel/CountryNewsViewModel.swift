@@ -2,8 +2,10 @@
 //  CountryNewsViewModel.swift
 //  MultiCountryNewsDemo · Presentation -> ViewModel (MVVM)
 //
-//  Cumple SRP y DIP (SOLID): depende únicamente de abstracciones (`CountryAuthRepositoryProtocol`,
-//  `CountryNewsComposing`) inyectadas con `@Inject`. No conoce `MexicoNewsModule`, `USANewsModule`, etc.
+//  Plug & UnPlug + Clean Architecture:
+//  - Recibe únicamente `CountryAuthRepositoryProtocol` por `@Inject`.
+//  - Al cambiar de país, desconecta (`teardownScope()`) el módulo anterior y conecta (`plug`) el nuevo
+//    usando `CountryNewsScope.module(for:)`.
 //
 
 import SwiftUI
@@ -13,29 +15,25 @@ import DaggerSwift
 @Inject(scope: CountryNewsScope.self)
 public final class CountryNewsPortalViewModel: ObservableObject {
     public let authRepository: any CountryAuthRepositoryProtocol
-    public let composer: any CountryNewsComposing
-    public let initialLocale: any CountryLocaleProviderProtocol
 
     @Published public var selectedCountry: SupportedCountry = .mexico
-    @Published public var currentCopy: LocalizedCountryCopy = MexicoLocaleProvider().copy
+    @Published public var currentCopy: LocalizedCountryCopy = .empty
     @Published public var identifierInput: String = ""
     @Published public var headlines: [NewsArticleItem] = []
     @Published public var isAuthenticated: Bool = false
 
     public func loadInitialCountry() async {
-        currentCopy = initialLocale.copy
-        if identifierInput.isEmpty {
-            identifierInput = initialLocale.copy.defaultIdentifier
-        }
+        plug(country: selectedCountry)
         await refreshState()
     }
 
+    /// Plug & UnPlug: Desconecta el scope del país anterior y conecta el `@Module` del nuevo país.
     public func selectCountry(_ country: SupportedCountry) {
-        selectedCountry = country
+        let previousModule = CountryNewsScope.module(for: selectedCountry)
+        previousModule.teardownScope()
 
-        let locale = composer.resolveLocale(for: country)
-        currentCopy = locale.copy
-        identifierInput = locale.copy.defaultIdentifier
+        selectedCountry = country
+        plug(country: country)
 
         if authRepository.currentSession != nil {
             authRepository.login(identifier: identifierInput, country: country)
@@ -57,12 +55,21 @@ public final class CountryNewsPortalViewModel: ObservableObject {
         headlines = []
     }
 
+    private func plug(country: SupportedCountry) {
+        let activeModule = CountryNewsScope.module(for: country)
+        let copy = activeModule.localeProvider().copy
+        currentCopy = copy
+        identifierInput = copy.defaultIdentifier
+    }
+
     private func refreshState() async {
-        guard let useCase = composer.resolveNewsUseCase(for: selectedCountry, auth: authRepository) else {
+        guard let session = CountryNewsCoreModule.validateCountrySession(auth: authRepository) else {
             isAuthenticated = false
             headlines = []
             return
         }
+        let activeModule = CountryNewsScope.module(for: selectedCountry)
+        let useCase = activeModule.makeNewsUseCase(session: session)
         isAuthenticated = true
         headlines = await useCase.execute()
     }

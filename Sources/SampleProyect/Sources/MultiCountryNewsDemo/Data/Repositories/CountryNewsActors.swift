@@ -31,9 +31,7 @@ public final class CountryAuthRepositoryImpl: CountryAuthRepositoryProtocol, Sen
     }
 
     public func logout() {
-        MainActor.assumeIsolated {
-            self.session = nil
-        }
+        MainActor.assumeIsolated { self.session = nil }
     }
 }
 
@@ -41,18 +39,13 @@ public final class CountryAuthRepositoryImpl: CountryAuthRepositoryProtocol, Sen
 
 public struct MexicoLocaleProvider: CountryLocaleProviderProtocol {
     public let copy = LocalizedCountryCopy(
-        country: .mexico,
-        languageCode: "es-MX",
-        regionBadge: "🇲🇽 México · Español",
+        country: .mexico, languageCode: "es-MX", regionBadge: "🇲🇽 México · Español",
         loginTitle: "Bienvenido a Noticias México",
         loginSubtitle: "Inicia sesión con tu teléfono o identificador para acceder a los titulares nacionales.",
-        identifierPlaceholder: "Teléfono (+52) o CURP",
-        defaultIdentifier: "+52 55 8421 0900",
-        loginButtonTitle: "Entrar",
-        logoutButtonTitle: "Salir",
+        identifierPlaceholder: "Teléfono (+52) o CURP", defaultIdentifier: "+52 55 8421 0900",
+        loginButtonTitle: "Entrar", logoutButtonTitle: "Salir",
         preconditionBlockedMessage: "Inicia sesión para desbloquear tu feed de noticias.",
-        newsHeaderTitle: "Titulares en México",
-        newsHeaderSubtitle: "Edición Nacional en Español",
+        newsHeaderTitle: "Titulares en México", newsHeaderSubtitle: "Edición Nacional en Español",
         breakingTag: "ÚLTIMA HORA"
     )
     public init() {}
@@ -63,31 +56,16 @@ public actor MexicoNewsRepository: CountryNewsRepositoryProtocol {
     public func fetchTopHeadlines() async -> [NewsArticleItem] {
         [
             NewsArticleItem(
-                id: "mx-1",
-                category: "Economía Digital",
+                id: "mx-1", category: "Economía Digital",
                 title: "SPEI 2.0 alcanza récord histórico de transferencias en tiempo real en México",
-                summary: "Los pagos digitales crecen un 48% impulsados por nuevas plataformas móviles en el país.",
-                readTime: "3 min",
-                source: "El Economista",
-                symbolName: "bolt.horizontal.circle.fill"
+                summary: "Los pagos digitales crecen un 48% impulsados por nuevas plataformas móviles.",
+                readTime: "3 min", source: "El Economista", symbolName: "bolt.horizontal.circle.fill"
             ),
             NewsArticleItem(
-                id: "mx-2",
-                category: "Tecnología",
+                id: "mx-2", category: "Tecnología",
                 title: "Equipos de ingeniería en CDMX y Guadalajara lideran adopción de Swift 6",
-                summary: "La arquitectura modular y el uso de actores reducen tiempos de compilación y errores de concurrencia.",
-                readTime: "4 min",
-                source: "Swift México",
-                symbolName: "swift"
-            ),
-            NewsArticleItem(
-                id: "mx-3",
-                category: "Mercados",
-                title: "Nuevos centros de innovación tecnológica se expanden en Monterrey y el Bajío",
-                summary: "La inversión en talento de software supera las proyecciones del primer semestre.",
-                readTime: "2 min",
-                source: "Reforma",
-                symbolName: "chart.line.uptrend.xyaxis"
+                summary: "La arquitectura modular y el uso de actores reducen errores de concurrencia.",
+                readTime: "4 min", source: "Swift México", symbolName: "swift"
             )
         ]
     }
@@ -97,18 +75,13 @@ public actor MexicoNewsRepository: CountryNewsRepositoryProtocol {
 
 public struct USALocaleProvider: CountryLocaleProviderProtocol {
     public let copy = LocalizedCountryCopy(
-        country: .usa,
-        languageCode: "en-US",
-        regionBadge: "🇺🇸 United States · English",
+        country: .usa, languageCode: "en-US", regionBadge: "🇺🇸 United States · English",
         loginTitle: "Welcome to US News",
         loginSubtitle: "Sign in with your US phone number or Passkey to read today's top stories.",
-        identifierPlaceholder: "Phone (+1) or Passkey",
-        defaultIdentifier: "+1 (415) 890-4210",
-        loginButtonTitle: "Sign In",
-        logoutButtonTitle: "Sign Out",
+        identifierPlaceholder: "Phone (+1) or Passkey", defaultIdentifier: "+1 (415) 890-4210",
+        loginButtonTitle: "Sign In", logoutButtonTitle: "Sign Out",
         preconditionBlockedMessage: "Sign in to unlock your personalized news feed.",
-        newsHeaderTitle: "Top Stories in the US",
-        newsHeaderSubtitle: "National Edition in English",
+        newsHeaderTitle: "Top Stories in the US", newsHeaderSubtitle: "National Edition in English",
         breakingTag: "BREAKING NEWS"
     )
     public init() {}
@@ -119,31 +92,16 @@ public actor USANewsRepository: CountryNewsRepositoryProtocol {
     public func fetchTopHeadlines() async -> [NewsArticleItem] {
         [
             NewsArticleItem(
-                id: "us-1",
-                category: "Silicon Valley",
+                id: "us-1", category: "Silicon Valley",
                 title: "Swift 6 Actors and Compile-Time Graphs Become the Standard for iOS Teams",
-                summary: "Strict concurrency and clean modular boundaries eliminate data races across large mobile apps.",
-                readTime: "3 min",
-                source: "Bay Area Tech",
-                symbolName: "cpu.fill"
+                summary: "Strict concurrency and clean modular boundaries eliminate data races.",
+                readTime: "3 min", source: "Bay Area Tech", symbolName: "cpu.fill"
             ),
             NewsArticleItem(
-                id: "us-2",
-                category: "Finance",
+                id: "us-2", category: "Finance",
                 title: "Instant Payment Rails See Record Growth Across Consumer Mobile Wallets",
                 summary: "Real-time settlement volume surges as multi-region apps streamline onboarding.",
-                readTime: "5 min",
-                source: "NY Financial",
-                symbolName: "dollarsign.circle.fill"
-            ),
-            NewsArticleItem(
-                id: "us-3",
-                category: "AI & Mobile",
-                title: "On-Device Intelligence Powers Next-Generation Personalized News Readers",
-                summary: "Local models summarize breaking stories while preserving user privacy.",
-                readTime: "4 min",
-                source: "TechPulse",
-                symbolName: "sparkles"
+                readTime: "5 min", source: "NY Financial", symbolName: "dollarsign.circle.fill"
             )
         ]
     }
@@ -153,18 +111,13 @@ public actor USANewsRepository: CountryNewsRepositoryProtocol {
 
 public struct BrazilLocaleProvider: CountryLocaleProviderProtocol {
     public let copy = LocalizedCountryCopy(
-        country: .brazil,
-        languageCode: "pt-BR",
-        regionBadge: "🇧🇷 Brasil · Português",
+        country: .brazil, languageCode: "pt-BR", regionBadge: "🇧🇷 Brasil · Português",
         loginTitle: "Bem-vindo ao Notícias Brasil",
-        loginSubtitle: "Entre com seu CPF ou celular (+55) para acessar as principais notícias do dia.",
-        identifierPlaceholder: "CPF ou Celular (+55)",
-        defaultIdentifier: "+55 11 98420-1100",
-        loginButtonTitle: "Entrar",
-        logoutButtonTitle: "Sair",
+        loginSubtitle: "Entre com seu CPF ou celular (+55) para acessar as principais notícias.",
+        identifierPlaceholder: "CPF ou Celular (+55)", defaultIdentifier: "+55 11 98420-1100",
+        loginButtonTitle: "Entrar", logoutButtonTitle: "Sair",
         preconditionBlockedMessage: "Faça login para liberar seu feed de notícias.",
-        newsHeaderTitle: "Manchetes no Brasil",
-        newsHeaderSubtitle: "Edição Nacional em Português",
+        newsHeaderTitle: "Manchetes no Brasil", newsHeaderSubtitle: "Edição Nacional em Português",
         breakingTag: "URGENTE"
     )
     public init() {}
@@ -175,22 +128,10 @@ public actor BrazilNewsRepository: CountryNewsRepositoryProtocol {
     public func fetchTopHeadlines() async -> [NewsArticleItem] {
         [
             NewsArticleItem(
-                id: "br-1",
-                category: "Finanças Digitais",
+                id: "br-1", category: "Finanças Digitais",
                 title: "Pix Automático transforma pagamentos recorrentes e assinaturas no Brasil",
                 summary: "Plataformas móveis em São Paulo lideram integração de pagamentos instantâneos.",
-                readTime: "3 min",
-                source: "Folha Tech",
-                symbolName: "qrcode.viewfinder"
-            ),
-            NewsArticleItem(
-                id: "br-2",
-                category: "Engenharia iOS",
-                title: "Equipes brasileiras adotam Clean Architecture e MVVM com módulos em Swift 6",
-                summary: "Organização clara de Domain, Data e Presentation acelera entregas em múltiplos países.",
-                readTime: "4 min",
-                source: "DevBrasil",
-                symbolName: "square.stack.3d.up.fill"
+                readTime: "3 min", source: "Folha Tech", symbolName: "qrcode.viewfinder"
             )
         ]
     }
@@ -200,18 +141,13 @@ public actor BrazilNewsRepository: CountryNewsRepositoryProtocol {
 
 public struct FranceLocaleProvider: CountryLocaleProviderProtocol {
     public let copy = LocalizedCountryCopy(
-        country: .france,
-        languageCode: "fr-FR",
-        regionBadge: "🇫🇷 France · Français",
+        country: .france, languageCode: "fr-FR", regionBadge: "🇫🇷 France · Français",
         loginTitle: "Bienvenue sur Actualités France",
-        loginSubtitle: "Connectez-vous avec votre numéro (+33) pour accéder aux grands titres du jour.",
-        identifierPlaceholder: "Mobile (+33) ou Identifiant",
-        defaultIdentifier: "+33 6 42 88 19 00",
-        loginButtonTitle: "Se Connecter",
-        logoutButtonTitle: "Déconnexion",
+        loginSubtitle: "Connectez-vous avec votre numéro (+33) pour accéder aux grands titres.",
+        identifierPlaceholder: "Mobile (+33) ou Identifiant", defaultIdentifier: "+33 6 42 88 19 00",
+        loginButtonTitle: "Se Connecter", logoutButtonTitle: "Déconnexion",
         preconditionBlockedMessage: "Connectez-vous pour accéder au fil d'actualités.",
-        newsHeaderTitle: "À la Une en France",
-        newsHeaderSubtitle: "Édition Nationale en Français",
+        newsHeaderTitle: "À la Une en France", newsHeaderSubtitle: "Édition Nationale en Français",
         breakingTag: "EN DIRECT"
     )
     public init() {}
@@ -222,22 +158,10 @@ public actor FranceNewsRepository: CountryNewsRepositoryProtocol {
     public func fetchTopHeadlines() async -> [NewsArticleItem] {
         [
             NewsArticleItem(
-                id: "fr-1",
-                category: "Technologie",
+                id: "fr-1", category: "Technologie",
                 title: "Les applications mobiles européennes adoptent l'architecture modulaire Swift 6",
-                summary: "Une séparation nette entre Domain, Data et Presentation facilite le support multilingue.",
-                readTime: "3 min",
-                source: "Les Échos",
-                symbolName: "eurosign.circle.fill"
-            ),
-            NewsArticleItem(
-                id: "fr-2",
-                category: "Innovation",
-                title: "Paris renforce sa position de pôle majeur pour l'ingénierie logicielle mobile",
-                summary: "De nouveaux centres de R&D investissent dans la sécurité et la concurrence stricte.",
-                readTime: "4 min",
-                source: "Le Monde Tech",
-                symbolName: "sparkles"
+                summary: "Une séparation nette entre Domain, Data et Presentation facilite le multilingue.",
+                readTime: "3 min", source: "Les Échos", symbolName: "eurosign.circle.fill"
             )
         ]
     }

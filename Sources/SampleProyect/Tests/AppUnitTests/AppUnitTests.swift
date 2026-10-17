@@ -65,7 +65,8 @@ struct AppUnitTests {
     @Test("FeedViewModel filtra repositorios por nombre")
     @MainActor
     func testBuscarRepositorioEnFeed() async {
-        let viewModel = GitHubFeedComposer.makeViewModel(module: FakerGitHubModule.self)
+        // Plug & UnPlug directo con el módulo Fake en 1 línea
+        let viewModel = FeedViewModel.plug(FakerGitHubModule.self)
 
         await viewModel.loadInitialData()
         viewModel.searchText = "AutoPilot"

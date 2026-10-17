@@ -148,23 +148,23 @@ struct AppGraphTests {
         expectGraph(FintechCoreModule.self, FintechSharedFlagsModule.self, FintechModuleV0_1.self)
             .dependency(GetFintechDashboardUseCase.self).hasNoPreconditions()
             .dependency(GetFintechDashboardUseCase.self).resolved {
-                $0.cardEngine.fetchCardProduct().moduleVersionTag.contains("Module(0.1)")
+                $0.cardProduct.moduleVersionTag.contains("Module(0.1)")
             }
 
         // 2. Module(1.0): hereda Core Bancario de 0.1 y sube a Classic Card 1.0
         expectGraph(FintechCoreModule.self, FintechSharedFlagsModule.self, FintechModuleV1.self)
             .matchesContract(of: FintechModuleV0_1.self)
             .dependency(GetFintechDashboardUseCase.self).resolved {
-                $0.cardEngine.fetchCardProduct().moduleVersionTag.contains("Module(1.0)") &&
-                $0.cardEngine.fetchCardProduct().isMetalV2 == false
+                $0.cardProduct.moduleVersionTag.contains("Module(1.0)") &&
+                $0.cardProduct.isMetalV2 == false
             }
 
         // 3. Module(2.0): hereda Core Bancario y sube a Metal V2 + conmuta A/B Flags en vivo
         expectGraph(FintechCoreModule.self, FintechSharedFlagsModule.self, FintechModuleV2.self)
             .matchesContract(of: FintechModuleV1.self)
             .dependency(GetFintechDashboardUseCase.self).resolved {
-                $0.cardEngine.fetchCardProduct().moduleVersionTag.contains("Module(2.0)") &&
-                $0.cardEngine.fetchCardProduct().isMetalV2 == true &&
+                $0.cardProduct.moduleVersionTag.contains("Module(2.0)") &&
+                $0.cardProduct.isMetalV2 == true &&
                 $0.layoutVariant.variantCode == "B" &&
                 $0.creditOfferVariant.experimentCode == "Exp-B"
             }

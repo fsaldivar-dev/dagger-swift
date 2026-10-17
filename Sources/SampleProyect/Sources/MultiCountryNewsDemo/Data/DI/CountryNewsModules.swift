@@ -2,8 +2,7 @@
 //  CountryNewsModules.swift
 //  MultiCountryNewsDemo · Data -> DI
 //
-//  Módulos de Inyección por País usando la paleta `@Module(1.0, scope: CountryNewsScope.self)`
-//  y el contrato estático `CountryNewsModuleContract` verificado en tiempo de compilación.
+//  Módulos Plug & UnPlug por País (`@Module(1.0, scope: CountryNewsScope.self)`).
 //
 
 import Foundation
@@ -61,4 +60,16 @@ public enum FranceNewsModule: CountryNewsModuleContract {
 
     @Scoped
     public static func newsRepository() -> any CountryNewsRepositoryProtocol { FranceNewsRepository() }
+}
+
+public extension CountryNewsScope {
+    /// Plug & UnPlug: Selecciona el `@Module` hermano correspondiente al país.
+    static func module(for country: SupportedCountry) -> any CountryNewsModuleContract.Type {
+        switch country {
+        case .mexico: return MexicoNewsModule.self
+        case .usa: return USANewsModule.self
+        case .brazil: return BrazilNewsModule.self
+        case .france: return FranceNewsModule.self
+        }
+    }
 }

@@ -2,9 +2,8 @@
 //  RepoDetailScope.swift
 //  Features
 //
-//  Capa Features · Sub-scope de Detalle de Repositorio (RepoDetailModule).
-//  Provee `RepoDetailInspector` atado al ciclo de vida de la pantalla de detalle
-//  y protegido por la @Precondition `ValidatedSession`.
+//  Capa Features · Sub-scope de Detalle de Repositorio (`RepoDetailModule`).
+//  Provee `RepoDetailInspector` protegido por la `@Precondition` `ValidatedSession`.
 //
 
 import Foundation
@@ -15,18 +14,14 @@ import Core
 @Module(includes: [ShowcaseCoreModule.self])
 public enum RepoDetailModule {
     @Scoped
-    public static func repoDetailInspector(
-        session: ValidatedSession,
-        gitHubRepository: any GitHubRepositoryProtocol
-    ) -> RepoDetailInspector {
-        RepoDetailInspector(session: session, gitHubRepository: gitHubRepository)
+    public static func repoDetailInspector(session: ValidatedSession) -> RepoDetailInspector {
+        RepoDetailInspector(session: session)
     }
 }
 
 @Inject(scope: RepoDetailModule.self)
 public final class RepoDetailInspector: ScopeDisposable, Sendable {
     public let session: ValidatedSession
-    public let gitHubRepository: any GitHubRepositoryProtocol
 
     public let instanceID = "Inspector-" + String(UUID().uuidString.prefix(4))
     @MainActor private var disposedState: Bool = false
