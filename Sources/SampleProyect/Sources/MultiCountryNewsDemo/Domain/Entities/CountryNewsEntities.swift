@@ -93,6 +93,22 @@ public struct LocalizedCountryCopy: Sendable, Equatable {
         self.newsHeaderSubtitle = newsHeaderSubtitle
         self.breakingTag = breakingTag
     }
+
+    public static let empty = LocalizedCountryCopy(
+        country: .mexico,
+        languageCode: "es-MX",
+        regionBadge: "🇲🇽 México",
+        loginTitle: "",
+        loginSubtitle: "",
+        identifierPlaceholder: "",
+        defaultIdentifier: "",
+        loginButtonTitle: "",
+        logoutButtonTitle: "",
+        preconditionBlockedMessage: "",
+        newsHeaderTitle: "",
+        newsHeaderSubtitle: "",
+        breakingTag: ""
+    )
 }
 
 public struct NewsArticleItem: Identifiable, Sendable, Equatable {

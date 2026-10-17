@@ -2,9 +2,8 @@
 //  FeedViewModel.swift
 //  Features
 //
-//  Capa Features · MVVM ViewModel unificado con @Inject.
-//  Resolución 100% explícita en tiempo de compilación:
-//  Cero `ScopeContainer`, cero `try!`, cero `try?`.
+//  Capa Features · MVVM ViewModel unificado con `@Inject`.
+//  Cumple SOLID y Ley de Demeter: solo llama a `execute()` de sus UseCases.
 //
 
 import Foundation
@@ -37,8 +36,19 @@ public final class FeedViewModel: ObservableObject {
     @Published public var lastLeakAuditCount: Int = 0
     private var pendingRepo: GitHubRepoItem? = nil
 
+    /// Plug & UnPlug: Construye el `FeedViewModel` conectando cualquier `@Module` que cumpla `GitHubServiceModuleContract`.
+    public static func plug<M: GitHubServiceModuleContract>(_ module: M.Type) -> FeedViewModel {
+        let repo = module.gitHubRepository()
+        return FeedViewModel(
+            getProfileUseCase: GetProfileUseCase(gitHubRepository: repo),
+            getRepositoriesUseCase: GetRepositoriesUseCase(gitHubRepository: repo),
+            authRepository: module.authRepository(),
+            flagRepository: module.featureFlags()
+        )
+    }
+
     public var environmentTitle: String {
-        getProfileUseCase.gitHubRepository.environmentTitle
+        getProfileUseCase.environmentTitle
     }
 
     public var filteredRepositories: [GitHubRepoItem] {
@@ -89,11 +99,7 @@ public final class FeedViewModel: ObservableObject {
     // MARK: - Precondición (@Precondition: ValidatedSession)
 
     public func toggleAuthentication() {
-        if isAuthenticated {
-            logout()
-        } else {
-            login()
-        }
+        isAuthenticated ? logout() : login()
     }
 
     public func login() {
@@ -123,10 +129,7 @@ public final class FeedViewModel: ObservableObject {
             showAuthGateSheet = true
             return
         }
-        let inspector = RepoDetailModule.repoDetailInspector(
-            session: session,
-            gitHubRepository: getProfileUseCase.gitHubRepository
-        )
+        let inspector = RepoDetailModule.repoDetailInspector(session: session)
         totalScopesCreated += 1
         activeRepoSession = ActiveRepoSession(repo: repo, inspector: inspector)
     }
@@ -134,6 +137,7 @@ public final class FeedViewModel: ObservableObject {
     public func closeActiveRepoDetail() {
         guard let session = activeRepoSession else { return }
         session.inspector.onScopeTeardown()
+        RepoDetailModule.teardownScope()
         activeRepoSession = nil
         lastLeakAuditCount = 0
         totalScopesTornDown += 1

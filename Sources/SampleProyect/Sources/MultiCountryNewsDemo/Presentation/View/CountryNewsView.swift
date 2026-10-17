@@ -9,7 +9,11 @@ import AppFoundation
 public struct CountryNewsFeatureView: View {
     @StateObject private var viewModel: CountryNewsPortalViewModel
 
-    public init(viewModel: CountryNewsPortalViewModel) {
+    public init(
+        viewModel: CountryNewsPortalViewModel = CountryNewsPortalViewModel(
+            authRepository: CountryAuthServiceModule.countryAuthRepository()
+        )
+    ) {
         self._viewModel = StateObject(wrappedValue: viewModel)
     }
 
@@ -66,51 +70,36 @@ public struct CountryNewsFeatureView: View {
     }
 
     private var loginCardSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 14) {
             Text(viewModel.currentCopy.loginTitle)
                 .font(.title2.weight(.bold))
-
             Text(viewModel.currentCopy.loginSubtitle)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-
             TextField(viewModel.currentCopy.identifierPlaceholder, text: $viewModel.identifierInput)
                 .textFieldStyle(.plain)
-                .font(.subheadline)
                 .padding(12)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color.showcaseSubtleFill)
-                )
-
+                .background(RoundedRectangle(cornerRadius: 10).fill(Color.showcaseSubtleFill))
             Button {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                    viewModel.login()
-                }
+                withAnimation(.snappy) { viewModel.login() }
             } label: {
                 Text(viewModel.currentCopy.loginButtonTitle)
                     .font(.subheadline.weight(.bold))
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 13)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(Color.indigo)
-                    )
+                    .padding(.vertical, 12)
+                    .background(RoundedRectangle(cornerRadius: 12).fill(Color.indigo))
                     .foregroundStyle(.white)
             }
             .buttonStyle(.plain)
         }
         .padding(20)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color.showcaseCardBackground)
-        )
+        .background(RoundedRectangle(cornerRadius: 18).fill(Color.showcaseCardBackground))
     }
 
     private var newsFeedSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(viewModel.currentCopy.breakingTag)
                         .font(.caption2.weight(.heavy))
                         .foregroundStyle(.red)
@@ -120,31 +109,22 @@ public struct CountryNewsFeatureView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-
                 Spacer()
-
-                Button {
-                    withAnimation(.snappy(duration: 0.25)) {
-                        viewModel.logout()
-                    }
-                } label: {
-                    Text(viewModel.currentCopy.logoutButtonTitle)
-                        .font(.caption.weight(.bold))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(Capsule().fill(Color.red.opacity(0.14)))
-                        .foregroundStyle(.red)
+                Button(viewModel.currentCopy.logoutButtonTitle) {
+                    withAnimation(.snappy) { viewModel.logout() }
                 }
+                .font(.caption.weight(.bold))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Capsule().fill(Color.red.opacity(0.14)))
+                .foregroundStyle(.red)
                 .buttonStyle(.plain)
             }
             .padding(16)
-            .background(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Color.showcaseCardBackground)
-            )
+            .background(RoundedRectangle(cornerRadius: 16).fill(Color.showcaseCardBackground))
 
             ForEach(viewModel.headlines) { article in
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 6) {
                     HStack {
                         Label(article.category, systemImage: article.symbolName)
                             .font(.caption.weight(.bold))
@@ -154,20 +134,12 @@ public struct CountryNewsFeatureView: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
-
-                    Text(article.title)
-                        .font(.headline)
-
-                    Text(article.summary)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                    Text(article.title).font(.headline)
+                    Text(article.summary).font(.subheadline).foregroundStyle(.secondary)
                 }
                 .padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(Color.showcaseCardBackground)
-                )
+                .background(RoundedRectangle(cornerRadius: 16).fill(Color.showcaseCardBackground))
             }
         }
     }

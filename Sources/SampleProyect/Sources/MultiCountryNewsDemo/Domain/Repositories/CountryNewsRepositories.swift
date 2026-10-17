@@ -21,8 +21,18 @@ public protocol CountryAuthRepositoryProtocol: Sendable {
     func logout()
 }
 
-/// Contrato en tiempo de compilación que todo módulo de país debe satisfacer.
+/// Contrato en tiempo de compilación que todo `@Module` de país satisface (Plug & UnPlug).
 public protocol CountryNewsModuleContract: GraphModule {
     static func localeProvider() -> any CountryLocaleProviderProtocol
     static func newsRepository() -> any CountryNewsRepositoryProtocol
+}
+
+public extension CountryNewsModuleContract {
+    static func makeNewsUseCase(session: AuthenticatedCountrySession) -> GetLocalizedNewsFeedUseCase {
+        GetLocalizedNewsFeedUseCase(
+            session: session,
+            localeProvider: localeProvider(),
+            newsRepository: newsRepository()
+        )
+    }
 }
