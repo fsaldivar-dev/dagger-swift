@@ -46,3 +46,20 @@ Responsable: **F** = Francisco · **C** = Claude (en la Mac de Francisco).
 
 - [ ] **Cambio que puede romper compilación:** nuevo caso `GraphError.mainActorRequired`. Quien haga `switch` sobre `GraphError` sin `default` debe agregar ese caso (o un `default`) — F/C
 - [ ] Paquete partido en `DaggerSwiftCore` + `DaggerSwift` (la API pública no cambia; nombres en snapshots pasan a `DaggerSwiftCore.X`) — F/C
+
+## 7. Diseño de errores: qué se atrapa en runtime y qué debe fallar al compilar
+
+Principio: los errores de resolución los maneja **quien coordina** (Coordinator / RootComposer), no las pantallas
+ni los casos de uso. Y solo deben llegar a runtime los errores que dependen del estado de la app.
+
+| Error | ¿Cuándo pasa? | Dónde debe detectarse |
+|---|---|---|
+| `circularDependency` | A necesita B y B necesita A | **Compilación** (dagger-graph ya lo detecta) |
+| `unregisteredDependency` | Nadie provee el tipo en esa raíz | **Compilación** (dagger-graph por raíz) |
+| `mainActorRequired` | Un tipo `@MainActor` pedido desde background | Compilación si se usa el grafo generado; si no, runtime |
+| `scopeNotActive` | Se pide algo `@Scoped(X)` sin abrir el scope X (`makeChildScope`) o después de cerrarlo (`teardown`) | Lo primero: compilación (por raíz). Lo segundo (usar un scope ya cerrado): runtime |
+| `unmetPrecondition` | La `@Precondition` devuelve `nil` (p. ej. no hay sesión) | **Runtime**: depende del estado; es el caso real del Coordinator |
+
+- [ ] dagger-graph: detectar `scopeNotActive` estático (pedir un `@Scoped(X)` desde una raíz que nunca abre X) — C
+- [ ] Separar en el tipo: errores de programación (ciclo, no registrado, scope nunca abierto) → diagnóstico de compilación + `assertionFailure` en debug; errores de estado (`unmetPrecondition`, scope ya cerrado) → `throws` tipado (`throws(GraphRuntimeError)`, Swift 6) que el Coordinator maneja — C (propuesta, requiere decisión de F por compatibilidad)
+- [ ] Documentar el patrón Coordinator: un solo `do/catch` en el coordinador que traduce `unmetPrecondition` a navegación (login, deep link pendiente) — C
