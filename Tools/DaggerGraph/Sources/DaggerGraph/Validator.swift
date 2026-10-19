@@ -32,10 +32,12 @@ struct Validator {
     }
 
     /// Tipos que el runtime siempre sabe resolver.
-    private static let builtins: Set<String> = ["ScopeContainer", "DaggerSwift.ScopeContainer"]
+    static let builtins: Set<String> = ["ScopeContainer", "DaggerSwift.ScopeContainer"]
 
     let nodes: [Node]
     let dynamic: [(file: String, reg: DynamicRegistration)]
+    let roots: [(file: String, root: RootFact, parent: Int?)]
+    let modules: [String: (file: String, fact: ModuleFact)]
     private var providers: [String: [Int]] = [:]
     private var providersByLastComponent: [String: [Int]] = [:]
     private let dynamicTypes: [String: (String, Loc)]
@@ -43,12 +45,19 @@ struct Validator {
     init(facts: [(file: String, facts: FileFacts)]) {
         var nodes: [Node] = []
         var dynamic: [(String, DynamicRegistration)] = []
+        var roots: [(String, RootFact, Int?)] = []
+        var modules: [String: (String, ModuleFact)] = [:]
         for (file, f) in facts {
             nodes += f.bindings.map { Node(file: file, binding: $0) }
             dynamic += f.dynamic.map { (file, $0) }
+            let offset = roots.count
+            roots += f.roots.map { (file, $0, $0.parent.map { $0 + offset }) }
+            for m in f.modules where modules[m.name] == nil { modules[m.name] = (file, m) }
         }
         self.nodes = nodes
         self.dynamic = dynamic
+        self.roots = roots
+        self.modules = modules
         var dyn: [String: (String, Loc)] = [:]
         for (file, reg) in dynamic { if let t = reg.type, dyn[t] == nil { dyn[t] = (file, reg.loc) } }
         self.dynamicTypes = dyn
@@ -60,7 +69,7 @@ struct Validator {
         }
     }
 
-    private func providerIndices(for type: String) -> [Int]? {
+    func providerIndices(for type: String) -> [Int]? {
         if let p = providers[type] { return p }
         if let p = providersByLastComponent[type] { return p }
         // `Foo.Bar` escrito calificado pero declarado vía extensión con otro prefijo.
@@ -73,6 +82,7 @@ struct Validator {
         var groups = Set(missingBindings().map { [$0] })
         groups.formUnion(cycles())
         groups.formUnion(scopeViolations().map { [$0] })
+        groups.formUnion(rootDiagnostics())
         return groups.sorted { $0[0] < $1[0] }.flatMap { $0 }
     }
 
@@ -206,6 +216,119 @@ struct Validator {
                 }
             }
             walk(n.binding.deps, root: nil)
+        }
+        return out
+    }
+}
+
+// MARK: - 4. Validación por raíz de composición
+
+extension Validator {
+    /// Módulos efectivos de una raíz (incluye los del padre y `includes` transitivos), en orden de registro.
+    func registrationOrder(of index: Int, visitedRoots: Set<Int> = []) -> (modules: [String], unknown: [String], literal: Bool) {
+        let entry = roots[index]
+        var order: [String] = []
+        var unknown: [String] = []
+        var literal = true
+        if let p = entry.parent, !visitedRoots.contains(p) {
+            let parent = registrationOrder(of: p, visitedRoots: visitedRoots.union([index]))
+            order = parent.modules
+            unknown = parent.unknown
+            literal = parent.literal
+        }
+        guard let listed = entry.root.modules else { return (order, unknown, false) }
+        var seen = Set(order)
+        func visit(_ name: String) {
+            guard let module = modules[name]?.fact else {
+                // `makeChildScope(for: S.self)` con S que no es @Module es legítimo (scope o precondición).
+                if entry.root.kind != .childScope || name != listed.first { unknown.append(name) }
+                return
+            }
+            for inc in module.includes { visit(inc) }
+            if seen.insert(name).inserted { order.append(name) }
+        }
+        listed.forEach(visit)
+        return (order, unknown, literal)
+    }
+
+    func rootDiagnostics() -> [[Diagnostic]] {
+        var out: [[Diagnostic]] = []
+        for (i, entry) in roots.enumerated() {
+            let root = entry.root
+            if let receiver = root.receiverModule, modules[receiver] == nil {
+                continue // `X.resolve(...)` / `X.buildGraph()` sobre algo que no es @Module: no es una raíz.
+            }
+            let (order, unknown, literal) = registrationOrder(of: i)
+            guard literal else {
+                out.append([Diagnostic(
+                    file: entry.file, loc: root.loc, severity: .warning,
+                    message: "raíz '\(root.text)': la lista de módulos no es literal; no se pudo validar estáticamente"
+                )])
+                continue
+            }
+            // Un hijo sin padre conocido puede recibir bindings del padre: solo se valida si el padre es conocido.
+            if root.kind == .childScope && entry.parent == nil { continue }
+
+            for name in unknown {
+                out.append([Diagnostic(
+                    file: entry.file, loc: root.loc, severity: .warning,
+                    message: "raíz '\(root.text)': el módulo '\(name)' no está en el código analizado (¿otro paquete? usa --manifest)"
+                )])
+            }
+
+            // Proveedor efectivo por tipo: el último registrado gana (como en runtime).
+            var effective: [String: Int] = [:]
+            for module in order {
+                for (idx, node) in nodes.enumerated() where node.binding.module == module {
+                    effective[node.binding.provides] = idx
+                }
+            }
+            let provided = Set(root.provided)
+            func provider(_ type: String) -> Int? {
+                if let i = effective[type] { return i }
+                if let last = type.split(separator: ".").last.map(String.init), let i = effective[last] { return i }
+                // @Inject: se registra Just-In-Time en cualquier grafo.
+                return providerIndices(for: type)?.first { nodes[$0].binding.kind == .inject }
+            }
+
+            let expectsFailure = !root.expectedMissing.isEmpty
+            let severity: Diagnostic.Severity = expectsFailure ? .note : .error
+            var reported = Set<String>()
+            var visited = Set<String>()
+
+            func check(_ type: String, requiredBy: String, at depFile: String, _ depLoc: Loc) {
+                if Self.builtins.contains(type) || provided.contains(type) { return }
+                guard let idx = provider(type) else {
+                    guard reported.insert(type).inserted else { return }
+                    let suffix = expectsFailure ? " (el test lo espera: unresolvedFailure)" : ""
+                    let mods = order.isEmpty ? "ninguno" : order.joined(separator: ", ")
+                    out.append([
+                        Diagnostic(
+                            file: entry.file, loc: root.loc, severity: severity,
+                            message: "raíz '\(root.text)': '\(type)' requerido por \(requiredBy) no lo provee ningún módulo de esta raíz [\(mods)]\(suffix)"
+                        ),
+                        Diagnostic(file: depFile, loc: depLoc, severity: .note, message: "'\(type)' se pide aquí"),
+                    ])
+                    return
+                }
+                guard visited.insert(type).inserted else { return }
+                let node = nodes[idx]
+                for d in node.binding.deps {
+                    check(d.type, requiredBy: node.binding.origin, at: node.file, d.loc)
+                }
+            }
+
+            // Bindings efectivos de los módulos de la raíz + tipos pedidos por el test.
+            for idx in Set(effective.values).sorted() {
+                let node = nodes[idx]
+                visited.insert(node.binding.provides)
+                for d in node.binding.deps {
+                    check(d.type, requiredBy: node.binding.origin, at: node.file, d.loc)
+                }
+            }
+            for req in root.requested {
+                check(req.type, requiredBy: "el test", at: entry.file, req.loc)
+            }
         }
         return out
     }

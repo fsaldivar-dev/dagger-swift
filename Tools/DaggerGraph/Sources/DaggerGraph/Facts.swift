@@ -16,6 +16,10 @@ struct Dependency: Codable, Sendable, Hashable {
     /// Tipo normalizado (sin `any`, sin paréntesis, sin espacios).
     var type: String
     var loc: Loc
+    /// Etiqueta externa con la que se pasa al `init`/función (`_` si no lleva). La usa `generate`.
+    var label: String = "_"
+    /// Tipo tal como está escrito en el código (para el código generado).
+    var spelled: String = ""
 }
 
 enum BindingKind: String, Codable, Sendable {
@@ -48,6 +52,13 @@ struct Binding: Codable, Sendable {
     var origin: String
     var loc: Loc
     var deps: [Dependency]
+    /// Módulo dueño (`nil` para tipos `@Inject`).
+    var module: String? = nil
+    /// Nombre de la función del `@Module` (para el código generado).
+    var function: String? = nil
+    var isThrowing: Bool = false
+    /// Tipo provisto tal como está escrito (`any Foo`, `Foo?` en precondiciones).
+    var spelledType: String = ""
 }
 
 struct ModuleFact: Codable, Sendable {
@@ -65,10 +76,37 @@ struct DynamicRegistration: Codable, Sendable {
     var loc: Loc
 }
 
+/// Una raíz de composición escrita en el código: qué módulos arman un grafo concreto.
+struct RootFact: Codable, Sendable {
+    enum Kind: String, Codable, Sendable {
+        case expectGraph, expectWhenCondition, root, buildGraph, childScope, moduleResolve, whenResolved
+    }
+    struct Requested: Codable, Sendable {
+        var type: String
+        var loc: Loc
+    }
+    var kind: Kind
+    /// Módulos en orden de registro; `nil` si la lista no es literal (no validable estáticamente).
+    var modules: [String]?
+    /// Para `buildGraph`/`resolve`/`whenResolved`: el tipo receptor (se valida que sea un @Module).
+    var receiverModule: String?
+    /// Raíz padre (índice en el mismo archivo) para `makeChildScope` sobre una raíz conocida.
+    var parent: Int?
+    /// Tipos que la cadena del test pide resolver (`.dependency(T.self)`, `.resolved(T.self)`).
+    var requested: [Requested] = []
+    /// Tipos que el test espera que NO resuelvan (`.dependency(T.self).unresolvedFailure()`).
+    var expectedMissing: [String] = []
+    /// Tipos inyectados por el test (`.whenResolved(T.self).returns(...)`).
+    var provided: [String] = []
+    var loc: Loc
+    var text: String
+}
+
 struct FileFacts: Codable, Sendable {
     var bindings: [Binding] = []
     var modules: [ModuleFact] = []
     var dynamic: [DynamicRegistration] = []
+    var roots: [RootFact] = []
 }
 
 enum TypeName {

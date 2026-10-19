@@ -79,7 +79,8 @@ final class FactExtractor: SyntaxVisitor {
                     lifetime: scope.map { .scope($0) } ?? .transient,
                     origin: "@Inject \(qualified)",
                     loc: loc(node),
-                    deps: injectDependencies(members)
+                    deps: injectDependencies(members),
+                    spelledType: qualified
                 )
             )
         }
@@ -101,7 +102,12 @@ final class FactExtractor: SyntaxVisitor {
     private func injectDependencies(_ members: MemberBlockSyntax) -> [Dependency] {
         if let initDecl = members.members.lazy.compactMap({ $0.decl.as(InitializerDeclSyntax.self) }).first {
             return initDecl.signature.parameterClause.parameters.map {
-                Dependency(type: TypeName.normalize($0.type.trimmedDescription), loc: loc($0))
+                Dependency(
+                    type: TypeName.normalize($0.type.trimmedDescription),
+                    loc: loc($0),
+                    label: $0.firstName.text,
+                    spelled: $0.type.trimmedDescription
+                )
             }
         }
         var deps: [Dependency] = []
@@ -112,7 +118,12 @@ final class FactExtractor: SyntaxVisitor {
             if v.attributes.contains(where: { attrName($0).map(skipAttrs.contains) ?? false }) { continue }
             for b in v.bindings {
                 guard b.initializer == nil, b.accessorBlock == nil, let t = b.typeAnnotation?.type else { continue }
-                deps.append(Dependency(type: TypeName.normalize(t.trimmedDescription), loc: loc(b)))
+                deps.append(Dependency(
+                    type: TypeName.normalize(t.trimmedDescription),
+                    loc: loc(b),
+                    label: b.pattern.trimmedDescription,
+                    spelled: t.trimmedDescription
+                ))
             }
         }
         return deps
@@ -157,8 +168,17 @@ final class FactExtractor: SyntaxVisitor {
                     origin: "\(module).\(fn.name.text)()",
                     loc: loc(fn.name),
                     deps: fn.signature.parameterClause.parameters.map {
-                        Dependency(type: TypeName.normalize($0.type.trimmedDescription), loc: loc($0))
-                    }
+                        Dependency(
+                            type: TypeName.normalize($0.type.trimmedDescription),
+                            loc: loc($0),
+                            label: $0.firstName.text,
+                            spelled: $0.type.trimmedDescription
+                        )
+                    },
+                    module: module,
+                    function: fn.name.text,
+                    isThrowing: fn.signature.effectSpecifiers?.throwsClause != nil,
+                    spelledType: ret.trimmedDescription
                 )
             )
         }
@@ -183,6 +203,160 @@ final class FactExtractor: SyntaxVisitor {
         }
         facts.dynamic.append(DynamicRegistration(call: call, type: type, loc: loc(node)))
         return .visitChildren
+    }
+
+    // MARK: - Raíces de composición
+
+    /// Variables locales que apuntan a una raíz (`let root = ScopeContainer.root(modules: ...)`).
+    private var rootVariables: [String: Int] = [:]
+    private var rootIndexByCall: [SyntaxIdentifier: Int] = [:]
+
+    override func visit(_ node: FunctionDeclSyntax) -> SyntaxVisitorContinueKind {
+        rootVariables.removeAll()
+        return .visitChildren
+    }
+
+    override func visitPost(_ node: VariableDeclSyntax) {
+        for binding in node.bindings {
+            guard let name = binding.pattern.as(IdentifierPatternSyntax.self)?.identifier.text,
+                  let value = binding.initializer?.value,
+                  let call = Self.unwrapCall(value),
+                  let index = rootIndexByCall[call.id] else { continue }
+            rootVariables[name] = index
+        }
+    }
+
+    /// Post-orden: la llamada interna (`ScopeContainer.root(...)`) se registra antes que la externa
+    /// (`.makeChildScope(...)`), así el hijo encuentra a su padre.
+    override func visitPost(_ node: FunctionCallExprSyntax) {
+        guard let root = rootFact(for: node) else { return }
+        facts.roots.append(root)
+        rootIndexByCall[node.id] = facts.roots.count - 1
+    }
+
+    private func rootFact(for node: FunctionCallExprSyntax) -> RootFact? {
+        let callee = node.calledExpression
+        let text = node.trimmedDescription.split(separator: "\n").first.map(String.init) ?? ""
+
+        if let ref = callee.as(DeclReferenceExprSyntax.self),
+           ["expectGraph", "expectWhenCondition"].contains(ref.baseName.text) {
+            let unlabeled = node.arguments.filter { $0.label == nil }
+            var root = RootFact(
+                kind: ref.baseName.text == "expectGraph" ? .expectGraph : .expectWhenCondition,
+                modules: literalTypes(unlabeled.map(\.expression)),
+                loc: loc(node),
+                text: text
+            )
+            applyChain(from: node, to: &root)
+            return root
+        }
+
+        guard let member = callee.as(MemberAccessExprSyntax.self) else { return nil }
+        let name = member.declName.baseName.text
+        let base = member.base.map { TypeName.stripSelf($0.trimmedDescription) }
+
+        switch name {
+        case "root" where base == "ScopeContainer" || base == "DaggerSwift.ScopeContainer":
+            guard let arg = node.arguments.first(where: { $0.label?.text == "modules" }) else { return nil }
+            return RootFact(kind: .root, modules: literalArray(arg.expression), loc: loc(node), text: text)
+
+        case "buildGraph":
+            guard let base, base.first?.isUppercase == true else { return nil }
+            let extras = node.arguments.first(where: { $0.label?.text == "including" }).map { literalArray($0.expression) } ?? []
+            return RootFact(kind: .buildGraph, modules: extras.map { [base] + $0 }, receiverModule: base, loc: loc(node), text: text)
+
+        case "resolve":
+            // `Modulo.resolve(T.self, including: [...])`: grafo compartido del módulo.
+            guard let base, base.first?.isUppercase == true, base != "ScopeContainer",
+                  let first = node.arguments.first, first.label == nil,
+                  first.expression.trimmedDescription.hasSuffix(".self") else { return nil }
+            let extras = node.arguments.first(where: { $0.label?.text == "including" }).map { literalArray($0.expression) } ?? []
+            var root = RootFact(kind: .moduleResolve, modules: extras.map { [base] + $0 }, receiverModule: base, loc: loc(node), text: text)
+            root.requested = [RootFact.Requested(type: TypeName.stripSelf(first.expression.trimmedDescription), loc: loc(node))]
+            return root
+
+        case "whenResolved":
+            guard let base, base.first?.isUppercase == true,
+                  let first = node.arguments.first else { return nil }
+            var root = RootFact(kind: .whenResolved, modules: [base], receiverModule: base, loc: loc(node), text: text)
+            root.provided = [TypeName.stripSelf(first.expression.trimmedDescription)]
+            applyChain(from: node, to: &root)
+            return root
+
+        case "makeChildScope":
+            guard let scopeArg = node.arguments.first(where: { $0.label?.text == "for" }) else { return nil }
+            let scope = TypeName.stripSelf(scopeArg.expression.trimmedDescription)
+            let extras = node.arguments.first(where: { $0.label?.text == "modules" }).map { literalArray($0.expression) } ?? []
+            var parent: Int?
+            if let receiver = member.base {
+                if let ref = receiver.as(DeclReferenceExprSyntax.self) {
+                    parent = rootVariables[ref.baseName.text]
+                } else if let call = Self.unwrapCall(receiver) {
+                    parent = rootIndexByCall[call.id]
+                }
+            }
+            // El scope también registra sus recetas si es un @Module (se resuelve en la validación).
+            return RootFact(kind: .childScope, modules: extras.map { [scope] + $0 }, parent: parent, loc: loc(node), text: text)
+
+        default:
+            return nil
+        }
+    }
+
+    /// Recorre `.dependency(T.self).unresolvedFailure()`, `.resolved(T.self)`, `.whenResolved(T.self)` encadenados.
+    private func applyChain(from node: FunctionCallExprSyntax, to root: inout RootFact) {
+        var steps: [(name: String, type: String?, loc: Loc)] = []
+        var current = Syntax(node)
+        while let member = current.parent?.as(MemberAccessExprSyntax.self),
+              member.base.map({ Syntax($0).id }) == current.id,
+              let call = member.parent?.as(FunctionCallExprSyntax.self),
+              Syntax(call.calledExpression).id == Syntax(member).id {
+            let arg = call.arguments.first?.expression.trimmedDescription
+            let type = arg.flatMap { $0.hasSuffix(".self") ? TypeName.stripSelf($0) : nil }
+            steps.append((member.declName.baseName.text, type, loc(call)))
+            current = Syntax(call)
+        }
+        var lastRequested: String?
+        for step in steps {
+            switch step.name {
+            case "whenResolved":
+                if let t = step.type { root.provided.append(t) }
+            case "dependency", "resolved":
+                if let t = step.type {
+                    root.requested.append(RootFact.Requested(type: t, loc: step.loc))
+                    lastRequested = t
+                }
+            case "unresolvedFailure":
+                if let t = lastRequested {
+                    root.expectedMissing.append(t)
+                    root.requested.removeAll { $0.type == t }
+                }
+            default:
+                break
+            }
+        }
+    }
+
+    private func literalTypes(_ exprs: [ExprSyntax]) -> [String]? {
+        var out: [String] = []
+        for e in exprs {
+            let t = e.trimmedDescription
+            guard t.hasSuffix(".self") else { return nil }
+            out.append(TypeName.stripSelf(t))
+        }
+        return out
+    }
+
+    private func literalArray(_ expr: ExprSyntax) -> [String]? {
+        guard let arr = expr.as(ArrayExprSyntax.self) else { return nil }
+        return literalTypes(arr.elements.map(\.expression))
+    }
+
+    private static func unwrapCall(_ expr: ExprSyntax) -> FunctionCallExprSyntax? {
+        if let call = expr.as(FunctionCallExprSyntax.self) { return call }
+        if let t = expr.as(TryExprSyntax.self) { return unwrapCall(t.expression) }
+        if let a = expr.as(AwaitExprSyntax.self) { return unwrapCall(a.expression) }
+        return nil
     }
 
     // MARK: - Helpers de atributos
