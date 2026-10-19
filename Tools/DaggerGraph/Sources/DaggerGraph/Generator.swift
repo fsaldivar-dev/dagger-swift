@@ -26,9 +26,11 @@ extension Validator {
         case scope(String)
     }
 
-    func generate(rootsIn filter: String?, targetModule: String?) -> (files: [GeneratedFile], skipped: [String]) {
+    func generate(rootsIn filter: String?, targetModule: String?) -> (files: [GeneratedFile], skipped: [String], smoke: [String], imports: Set<String>) {
         var files: [GeneratedFile] = []
         var skipped: [String] = []
+        var smoke: [String] = []
+        var imports = Set<String>()
         var seenGraphs = Set<String>()
 
         for (i, entry) in roots.enumerated() {
@@ -45,16 +47,44 @@ extension Validator {
             }.joined(separator: "_")
             guard seenGraphs.insert(graphName).inserted else { continue }
 
-            let result = emitGraph(named: graphName, order: order, targetModule: targetModule)
+            let result = emitGraph(named: graphName, order: order, listed: root.modules ?? [], targetModule: targetModule)
             files += result.files
             skipped += result.skipped.map { "\(graphName): \($0)" }
+            smoke.append(result.smoke)
+            imports.formUnion(result.imports)
         }
-        return (files, skipped)
+        return (files, skipped, smoke, imports)
+    }
+
+    /// Archivo de tests de humo: cada raíz se arma con el RUNTIME y se resuelve cada binding desde la
+    /// caja donde vive. Falla solo con errores de programación; los de estado (precondición) son válidos.
+    static func smokeTestFile(_ functions: [String], imports: Set<String>) -> String {
+        var out = header
+        out += (imports.union(["Testing"])).sorted().map { "import \($0)" }.joined(separator: "\n") + "\n\n"
+        out += """
+        /// Resuelve `type` y registra un Issue solo si es un error de programación (debió detectarse al compilar).
+        private func smokeResolve<T>(_ container: ScopeContainer, _ type: T.Type, sourceLocation: SourceLocation = #_sourceLocation) {
+            do {
+                _ = try container.resolve(type)
+            } catch let error as GraphError where !error.isProgrammerError {
+                // Estado (p. ej. @Precondition sin sesión): válido en un test de humo.
+            } catch {
+                Issue.record("\\(String(reflecting: type)): \\(error)", sourceLocation: sourceLocation)
+            }
+        }
+
+        @Suite("Humo: cada raíz resuelve con el runtime (generado por dagger-graph)")
+        struct DaggerGraphSmokeTests {
+
+        """
+        out += functions.joined(separator: "\n")
+        out += "}\n"
+        return out
     }
 
     // MARK: - Un grafo
 
-    private func emitGraph(named graphName: String, order: [String], targetModule: String?) -> (files: [GeneratedFile], skipped: [String]) {
+    private func emitGraph(named graphName: String, order: [String], listed: [String], targetModule: String?) -> (files: [GeneratedFile], skipped: [String], smoke: String, imports: Set<String>) {
         // Proveedor efectivo por tipo (el último registrado gana) + tipos @Inject (Just-In-Time).
         // Un tipo/módulo declarado en varios targets (p. ej. el mismo Fake en dos targets de test):
         // se prefiere la declaración del target de salida; si no, la primera.
@@ -242,6 +272,25 @@ extension Validator {
         }
 
         let imports = importsHeader(for: usedNodes, targetModule: targetModule)
+        let importSet = Set(imports.split(separator: "\n").map { $0.replacingOccurrences(of: "import ", with: "") })
+
+        // Test de humo con el runtime para esta raíz.
+        var smoke = "    @Test(\"Humo · [\(listed.joined(separator: ", "))]\")\n"
+        smoke += mainActor ? "    @MainActor\n" : ""
+        smoke += "    func smoke_\(graphName)() {\n"
+        smoke += "        let root = ScopeContainer.root(modules: [\(listed.map { "\($0).self" }.joined(separator: ", "))])\n"
+        for scope in scopeNodes.keys.sorted() {
+            smoke += "        let \(Self.accessorName(scope))Box = root.makeChildScope(for: \(scope).self)\n"
+        }
+        for idx in rootNodes {
+            smoke += "        smokeResolve(root, \(Self.metatype(Self.returnType(nodes[idx].binding))))\n"
+        }
+        for scope in scopeNodes.keys.sorted() {
+            for idx in scopeNodes[scope] ?? [] {
+                smoke += "        smokeResolve(\(Self.accessorName(scope))Box, \(Self.metatype(Self.returnType(nodes[idx].binding))))\n"
+            }
+        }
+        smoke += "    }\n"
         var files: [GeneratedFile] = []
         let scopeNames = scopeNodes.keys.sorted()
 
@@ -271,7 +320,7 @@ extension Validator {
             f += "    }\n}\n"
             files.append(GeneratedFile(name: "\(graphName)+\(Self.typeIdentifier(scope)).swift", content: f))
         }
-        return (files, skipped)
+        return (files, skipped, smoke, importSet)
     }
 
     private func homeOf(_ idx: Int, _ homes: [Int: Home?]) -> Home? {

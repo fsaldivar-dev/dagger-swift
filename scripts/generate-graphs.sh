@@ -8,9 +8,11 @@ swift build -c release --package-path Tools/DaggerGraph >/dev/null
 G="$(swift build -c release --package-path Tools/DaggerGraph --show-bin-path)/dagger-graph"
 
 "$G" generate --no-cache --out Benchmarks/Tests/DIFrameworksDebateTests/Generated \
+  --smoke-tests Benchmarks/Tests/DIFrameworksDebateTests/Generated/DaggerGraphSmokeTests.swift \
   --roots-in Benchmarks --target-module DIFrameworksDebateTests Benchmarks
 
 "$G" generate --no-cache --out Sources/SampleProyect/Tests/AppGraphTests/Generated \
+  --smoke-tests Sources/SampleProyect/Tests/AppGraphTests/Generated/DaggerGraphSmokeTests.swift \
   --roots-in Sources/SampleProyect/Tests/AppGraphTests --target-module AppGraphTests \
   --import AppFoundation --import Core --import Services --import Features \
   --import MultiCountryNewsDemo --import FintechMockupDemo \

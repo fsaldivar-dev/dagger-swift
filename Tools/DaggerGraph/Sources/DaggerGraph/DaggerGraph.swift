@@ -102,6 +102,7 @@ struct DaggerGraphCommand {
         let outputSwift = option("--output-swift")
         // generate
         let generateOut = option("--out")
+        let smokeTestsPath = option("--smoke-tests")
         let rootsIn = option("--roots-in")
         let targetModule = option("--target-module")
         var extraImports: [String] = []
@@ -248,8 +249,14 @@ struct DaggerGraphCommand {
         }
 
         if generateMode, let generateOut, !diags.contains(where: { $0.severity == .error }) {
-            let (files, skipped) = validator.generate(rootsIn: rootsIn, targetModule: targetModule)
+            let (files, skipped, smoke, imports) = validator.generate(rootsIn: rootsIn, targetModule: targetModule)
             let written = writeGenerated(files, to: generateOut)
+            if let smokeTestsPath {
+                let content = Validator.smokeTestFile(smoke, imports: imports)
+                if (try? String(contentsOfFile: smokeTestsPath, encoding: .utf8)) != content {
+                    try? content.write(toFile: smokeTestsPath, atomically: true, encoding: .utf8)
+                }
+            }
             clock.mark("generate")
             FileHandle.standardError.write(Data("[dagger-graph generate] \(files.count) archivos (\(written) reescritos) en \(generateOut)\n".utf8))
             for s in skipped {
