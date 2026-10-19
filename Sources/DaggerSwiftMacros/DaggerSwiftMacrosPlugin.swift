@@ -349,8 +349,11 @@ struct DaggerSwiftMacrosPlugin {
             lines.append("")
         }
 
-        let isClassType = clean.contains("class ")
-        let isMainActor = clean.contains("@MainActor")
+        // Solo el encabezado del tipo (atributos + `class/struct/actor Nombre: ...`) decide el aislamiento:
+        // un miembro `@MainActor private var x` NO hace al tipo @MainActor.
+        let header = clean.firstIndex(of: "{").map { String(clean[..<$0]) } ?? clean
+        let isClassType = header.contains("class ")
+        let isMainActor = header.contains("@MainActor")
         let initModifier = isClassType ? "public convenience init" : "public init"
         let resolveArgs = initParams.map { p in
             let label = p.externalLabel == "_" ? "" : "\(p.externalLabel): "
@@ -384,7 +387,11 @@ struct DaggerSwiftMacrosPlugin {
             }.joined(separator: ", ")
         }
 
-        let makeInstance = isMainActor ? "MainActor.assumeIsolated { Self(\(callArgs)) }" : "Self(\(callArgs))"
+        // Tipos @MainActor: si se resuelven fuera del hilo principal se lanza `GraphError.mainActorRequired`
+        // en lugar de crashear con `MainActor.assumeIsolated`.
+        let makeInstance = isMainActor
+            ? "try DaggerSwift.ScopeContainer.onMainActor { Self(\(callArgs)) }"
+            : "Self(\(callArgs))"
 
         lines.append("nonisolated public static func register(in container: DaggerSwift.ScopeContainer) {")
         if let scopeArg, !scopeArg.isEmpty {

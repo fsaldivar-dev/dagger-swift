@@ -85,6 +85,9 @@ public enum GraphError: Error, Equatable, CustomStringConvertible, Sendable {
     case scopeNotActive(requestedScope: ScopeID, currentScope: ScopeID, dependencyType: String)
     /// Se detectó un ciclo infinito en el grafo (`A -> B -> A`).
     case circularDependency(chain: [String])
+    /// Un tipo `@MainActor` se intentó construir fuera del hilo principal.
+    /// Resuélvelo desde `@MainActor` o con `try await container.resolveOnMainActor(T.self)`.
+    case mainActorRequired(type: String)
 
     public var description: String {
         switch self {
@@ -96,6 +99,8 @@ public enum GraphError: Error, Equatable, CustomStringConvertible, Sendable {
             return "El scope [\(requested)] requerido por [\(dep)] no está activo en la cadena de padres de [\(current)]"
         case let .circularDependency(chain):
             return "Ciclo de dependencias detectado: " + chain.joined(separator: " -> ")
+        case let .mainActorRequired(type):
+            return "[\(type)] es @MainActor y se intentó construir fuera del hilo principal; usa resolveOnMainActor(_:)"
         }
     }
 }

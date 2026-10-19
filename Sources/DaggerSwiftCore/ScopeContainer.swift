@@ -849,3 +849,21 @@ public final class ScopeContainer: @unchecked Sendable {
         }
     }
 }
+
+// MARK: - Aislamiento @MainActor
+
+public extension ScopeContainer {
+    /// Usado por la expansión de `@Inject` en tipos `@MainActor`: construye en el hilo principal
+    /// o lanza `GraphError.mainActorRequired` (antes: crash de `MainActor.assumeIsolated`).
+    static func onMainActor<T: Sendable>(_ body: @MainActor () throws -> T) throws -> T {
+        guard Thread.isMainThread else {
+            throw GraphError.mainActorRequired(type: String(reflecting: T.self))
+        }
+        return try MainActor.assumeIsolated(body)
+    }
+
+    /// Resuelve `T` saltando al `MainActor` (para ViewModels `@MainActor @Inject` pedidos desde background).
+    func resolveOnMainActor<T: Sendable>(_ type: T.Type = T.self) async throws -> T {
+        try await MainActor.run { try self.resolve(type) }
+    }
+}
