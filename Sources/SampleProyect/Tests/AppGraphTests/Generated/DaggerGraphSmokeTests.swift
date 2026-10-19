@@ -6,6 +6,7 @@ import Core
 import DaggerSwift
 import Features
 import FintechMockupDemo
+import Foundation
 import MultiCountryNewsDemo
 import Services
 import Testing

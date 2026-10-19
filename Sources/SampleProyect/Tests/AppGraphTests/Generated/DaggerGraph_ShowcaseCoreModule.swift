@@ -6,11 +6,13 @@ import Core
 import DaggerSwift
 import Features
 import FintechMockupDemo
+import Foundation
 import MultiCountryNewsDemo
 import Services
 
 /// Grafo generado para la raíz [ShowcaseCoreModule]: factories directas, sin `resolve`.
-final class DaggerGraph_ShowcaseCoreModule {
+final class DaggerGraph_ShowcaseCoreModule: @unchecked Sendable {
+    let lock = NSRecursiveLock()
     init() {}
 
     func authSessionRepository() throws -> AuthSessionRepository {

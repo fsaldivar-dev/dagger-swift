@@ -2,9 +2,11 @@
 // swiftlint:disable all
 
 import DaggerSwift
+import Foundation
 
 /// Grafo generado para la raíz [BenchModuleV0_1]: factories directas, sin `resolve`.
-final class DaggerGraph_BenchModuleV0_1 {
+final class DaggerGraph_BenchModuleV0_1: @unchecked Sendable {
+    let lock = NSRecursiveLock()
     init() {}
 
     /// Abre el scope `BenchFeatureScope` (sus `@Scoped` viven mientras viva el objeto devuelto).
@@ -12,6 +14,7 @@ final class DaggerGraph_BenchModuleV0_1 {
 
     private var _benchApiClientProtocol: (any BenchApiClientProtocol)?
     func benchApiClientProtocol() throws -> any BenchApiClientProtocol {
+        lock.lock(); defer { lock.unlock() }
         if let cached = _benchApiClientProtocol { return cached }
         let value = BenchModuleV0_1.apiClient()
         _benchApiClientProtocol = value

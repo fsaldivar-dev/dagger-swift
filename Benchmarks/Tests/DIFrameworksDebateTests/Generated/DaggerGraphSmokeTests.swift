@@ -2,6 +2,7 @@
 // swiftlint:disable all
 
 import DaggerSwift
+import Foundation
 import Testing
 
 /// Resuelve `type` y registra un Issue solo si es un error de programación (debió detectarse al compilar).

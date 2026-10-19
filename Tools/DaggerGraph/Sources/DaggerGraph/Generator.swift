@@ -9,8 +9,8 @@
 //  - `@Provider`, `@BusinessRule`, `@Inject`: llamada directa en cada acceso.
 //  - `@Precondition`: `guard let` + `throw GraphError.unmetPrecondition`.
 //  Es opt-in y reversible: si no se usa el código generado, el runtime sigue igual.
-//  NO es thread-safe (igual que un `lazy var`): confínalo a un hilo/actor; si algún tipo es
-//  `@MainActor`, la clase entera se marca `@MainActor`.
+//  Thread-safety: si algún tipo es `@MainActor`, la clase entera se marca `@MainActor`; si no, un
+//  `NSRecursiveLock` por grafo (compartido con sus scopes) garantiza construcción única.
 //
 
 import Foundation
@@ -187,6 +187,10 @@ extension Validator {
         let usedNodes = rootNodes + scopeNodes.values.flatMap { $0 }
         let mainActor = usedNodes.contains { nodes[$0].binding.isMainActor }
         let isolation = mainActor ? "@MainActor\n" : ""
+        // Thread-safety: @MainActor si algún tipo lo es; si no, un lock recursivo por grafo (compartido con
+        // sus scopes) protege cada @Singleton/@Scoped: se construyen una sola vez aunque haya concurrencia.
+        let lockLine = mainActor ? "" : "        lock.lock(); defer { lock.unlock() }\n"
+        let sendable = mainActor ? "" : ": @unchecked Sendable"
 
         func accessor(_ idx: Int) -> String { Self.accessorName(nodes[idx].binding.provides) }
         /// Expresión que construye el nodo y, si tiene `@Precondition` directas, un preludio que
@@ -236,7 +240,7 @@ extension Validator {
                 return """
                     private var _\(name): \(Self.optionalStorage(type))
                     func \(name)() throws -> \(type) {
-                        if let cached = _\(name) { return cached }
+                \(lockLine)        if let cached = _\(name) { return cached }
                 \(pre)        let value = \(expr)
                         _\(name) = value
                         return value
@@ -246,7 +250,7 @@ extension Validator {
                 return """
                     private var _\(name): \(type)?
                     func \(name)() throws -> \(type) {
-                        if let cached = _\(name) { return cached }
+                \(lockLine)        if let cached = _\(name) { return cached }
                 \(pre)        let value = \(expr)
                         _\(name) = value
                         return value
@@ -271,7 +275,7 @@ extension Validator {
             }
         }
 
-        let imports = importsHeader(for: usedNodes, targetModule: targetModule)
+        let imports = importsHeader(for: usedNodes, targetModule: targetModule, foundation: !mainActor)
         let importSet = Set(imports.split(separator: "\n").map { $0.replacingOccurrences(of: "import ", with: "") })
 
         // Test de humo con el runtime para esta raíz.
@@ -296,7 +300,8 @@ extension Validator {
 
         var rootFile = Self.header + imports
         rootFile += "\n/// Grafo generado para la raíz [\(order.joined(separator: ", "))]: factories directas, sin `resolve`.\n"
-        rootFile += "\(isolation)final class \(graphName) {\n    init() {}\n"
+        rootFile += "\(isolation)final class \(graphName)\(sendable) {\n"
+        rootFile += mainActor ? "    init() {}\n" : "    let lock = NSRecursiveLock()\n    init() {}\n"
         for scope in scopeNames {
             rootFile += "\n    /// Abre el scope `\(scope)` (sus `@Scoped` viven mientras viva el objeto devuelto).\n"
             rootFile += "    func make\(Self.typeIdentifier(scope))() -> \(Self.scopeClass(scope)) { \(Self.scopeClass(scope))(parent: self) }\n"
@@ -311,8 +316,9 @@ extension Validator {
             var f = Self.header + imports
             f += "\nextension \(graphName) {\n"
             f += "    /// Scope `\(scope)` del grafo [\(order.joined(separator: ", "))].\n"
-            f += "    \(isolation.isEmpty ? "" : "@MainActor\n    ")final class \(Self.scopeClass(scope)) {\n"
+            f += "    \(isolation.isEmpty ? "" : "@MainActor\n    ")final class \(Self.scopeClass(scope))\(sendable) {\n"
             f += "        let parent: \(graphName)\n        init(parent: \(graphName)) { self.parent = parent }\n"
+            if !mainActor { f += "        var lock: NSRecursiveLock { parent.lock }\n" }
             for idx in scopeNodes[scope] ?? [] {
                 f += "\n" + body(idx, home: .scope(scope)).split(separator: "\n", omittingEmptySubsequences: false)
                     .map { $0.isEmpty ? "" : "    " + $0 }.joined(separator: "\n") + "\n"
@@ -333,8 +339,9 @@ extension Validator {
 
     /// `import` de DaggerSwift + los módulos de los archivos que declaran los nodos usados
     /// (+ `--import M` para tipos declarados en módulos sin bindings, p. ej. protocolos en `Core`).
-    private func importsHeader(for used: [Int], targetModule: String?) -> String {
+    private func importsHeader(for used: [Int], targetModule: String?, foundation: Bool) -> String {
         var mods = Set(["DaggerSwift"]).union(extraImports)
+        if foundation { mods.insert("Foundation") }
         for idx in used {
             if let m = Self.moduleName(forFile: nodes[idx].file), m != targetModule { mods.insert(m) }
         }
