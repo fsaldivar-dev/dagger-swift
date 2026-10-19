@@ -27,3 +27,39 @@ Salida: `archivo:línea:col: error|warning|note: mensaje`; exit 1 si hay errores
 
 Build limpio de la herramienta (incluye swift-syntax 600.0.1, resolve aparte ~14 s):
 debug ≈ 11.5 s (con y sin `--enable-experimental-prebuilts`: los prebuilts solo aplican a targets macro), release ≈ 154 s.
+
+## Fase 2
+
+### 4. Validación por raíz de composición
+`ScopeContainer.root(modules:)`, `expectGraph(...)`/`expectWhenCondition(...)`, `Modulo.buildGraph(including:)`,
+`Modulo.resolve(_:including:)`, `Modulo.whenResolved(_:)` y `makeChildScope(for:modules:)` (sobre una raíz conocida,
+encadenada o vía `let x = ...`) se validan por separado, siguiendo `includes` en orden de registro.
+Si la cadena del test declara `.unresolvedFailure()`, la raíz incompleta sale como `note` (p. ej. `testModuloFaltante`).
+Listas no literales → `warning` "no se pudo validar estáticamente".
+
+### Build-tool plugin
+`DaggerGraphBuildPlugin` (en este paquete; en los tags de release, contra el artifactbundle):
+
+```swift
+.target(name: "App", plugins: [.plugin(name: "DaggerGraphBuildPlugin", package: "DaggerGraph")])
+```
+
+Costo medido en SampleProyect (debug): build sin cambios 351 → 378 ms (+27 ms); 1 archivo 518 → 542 ms (+24 ms).
+
+### `generate`: factories tipadas directas
+```bash
+scripts/generate-graphs.sh   # regenera Benchmarks/…/Generated y SampleProyect/…/AppGraphTests/Generated
+```
+Por cada raíz literal: `DaggerGraph_<Módulos>.swift` (singletons + transients) y un archivo por scope
+(`+<Scope>.swift`). Sin `resolve`, sin `Any`; `@Precondition` → `guard let` + `throw`, evaluadas primero.
+Escribe solo si cambió; borra generados obsoletos. No es thread-safe (como un `lazy var`); `@MainActor` si algún tipo lo es.
+
+Benchmark honesto (Round 4, misma semántica: singleton + scoped cacheado + transient; release, 10.000 resoluciones):
+
+| | ms |
+|---|---|
+| A mano (piso) | 0.06–0.08 |
+| Generado | 0.10–0.16 |
+| Motor DAG (`resolve`) | 7.3–12 |
+| Round 3 "Explícito" (sin caché, no comparable) | 0.23–0.30 |
+| Arranque en frío ×1000: DAG / generado | ~11 ms / ~0.08 ms |

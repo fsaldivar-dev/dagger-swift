@@ -80,7 +80,8 @@ final class FactExtractor: SyntaxVisitor {
                     origin: "@Inject \(qualified)",
                     loc: loc(node),
                     deps: injectDependencies(members),
-                    spelledType: qualified
+                    spelledType: qualified,
+                    isMainActor: attribute(named: "MainActor", in: attributes) != nil
                 )
             )
         }
@@ -157,6 +158,8 @@ final class FactExtractor: SyntaxVisitor {
                 continue
             }
 
+            let reason = attribute(named: "Precondition", in: attrs)?.arguments?.as(LabeledExprListSyntax.self)?.first?
+                .expression.as(StringLiteralExprSyntax.self)?.representedLiteralValue
             var provides = TypeName.normalize(ret.trimmedDescription)
             if kind == .precondition, provides.hasSuffix("?") { provides.removeLast() }
 
@@ -178,7 +181,8 @@ final class FactExtractor: SyntaxVisitor {
                     module: module,
                     function: fn.name.text,
                     isThrowing: fn.signature.effectSpecifiers?.throwsClause != nil,
-                    spelledType: ret.trimmedDescription
+                    spelledType: ret.trimmedDescription,
+                    reason: reason
                 )
             )
         }

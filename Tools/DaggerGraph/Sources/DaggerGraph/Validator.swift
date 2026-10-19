@@ -37,6 +37,8 @@ struct Validator {
     let nodes: [Node]
     let dynamic: [(file: String, reg: DynamicRegistration)]
     let roots: [(file: String, root: RootFact, parent: Int?)]
+    /// Módulos extra a importar en el código generado (`generate --import M`).
+    var extraImports: Set<String> = []
     let modules: [String: (file: String, fact: ModuleFact)]
     private var providers: [String: [Int]] = [:]
     private var providersByLastComponent: [String: [Int]] = [:]

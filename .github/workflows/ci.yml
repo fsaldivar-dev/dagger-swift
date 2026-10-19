@@ -76,3 +76,12 @@ jobs:
         run: |
           "$(swift build --package-path Tools/DaggerGraph --show-bin-path)/dagger-graph" \
             --timings --no-cache Sources/SampleProyect Benchmarks
+      - name: Código generado al día (dagger-graph generate)
+        run: |
+          scripts/generate-graphs.sh
+          GEN="Benchmarks/Tests/DIFrameworksDebateTests/Generated Sources/SampleProyect/Tests/AppGraphTests/Generated"
+          if [ -n "$(git status --porcelain -- $GEN)" ]; then
+            git status --porcelain -- $GEN
+            echo "::error::El código generado está desactualizado: corre scripts/generate-graphs.sh y commitea."
+            exit 1
+          fi

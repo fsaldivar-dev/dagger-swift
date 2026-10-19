@@ -27,7 +27,7 @@ struct CacheEntry: Codable, Sendable {
 }
 
 struct CacheFile: Codable {
-    static let currentVersion = 2
+    static let currentVersion = 3
     var version = CacheFile.currentVersion
     var roots: [String] = []
     var entries: [String: CacheEntry] = [:]
@@ -86,6 +86,8 @@ struct DaggerGraphCommand {
 
     static func main() async {
         var args = Array(CommandLine.arguments.dropFirst())
+        let generateMode = args.first == "generate"
+        if generateMode { args.removeFirst() }
         let timings = args.contains("--timings")
         let useCache = !args.contains("--no-cache")
         func option(_ name: String) -> String? {
@@ -97,6 +99,16 @@ struct DaggerGraphCommand {
         let cachePath = option("--cache") ?? ".build/dagger-graph-cache.json"
         // Archivo Swift de salida para el build-tool plugin (se escribe solo si cambió).
         let outputSwift = option("--output-swift")
+        // generate
+        let generateOut = option("--out")
+        let rootsIn = option("--roots-in")
+        let targetModule = option("--target-module")
+        var extraImports: [String] = []
+        while let m = option("--import") { extraImports.append(m) }
+        if generateMode && generateOut == nil {
+            FileHandle.standardError.write(Data("uso: dagger-graph generate --out <dir> [--roots-in <prefijo>] [--target-module M] [--import M]... <dir>...\n".utf8))
+            exit(2)
+        }
         let roots = args.filter { !$0.hasPrefix("--") }
         guard !roots.isEmpty else {
             FileHandle.standardError.write(Data("uso: dagger-graph [--timings] [--no-cache] [--cache <ruta>] [--output-swift <ruta>] <dir> [<dir> ...]\n".utf8))
@@ -124,7 +136,7 @@ struct DaggerGraphCommand {
             && files.allSatisfy { f in cache.entries[f.path].map { $0.mtime == f.mtime && $0.size == f.size } ?? false }
         clock.mark("scan")
 
-        if unchanged, let diags = cache.diagnostics {
+        if unchanged, !generateMode, let diags = cache.diagnostics {
             emit(diags)
             if let outputSwift { writeStamp(outputSwift, diagnostics: diags, files: cache.entries.count) }
             if timings {
@@ -197,8 +209,20 @@ struct DaggerGraphCommand {
         // 4. Validación
         let allFacts = entries.compactMap { path, e in e.facts.map { (file: path, facts: $0) } }
             .sorted { $0.file < $1.file }
-        let diags = Validator(facts: allFacts).run()
+        var validator = Validator(facts: allFacts)
+        validator.extraImports = Set(extraImports)
+        let diags = validator.run()
         clock.mark("validate")
+
+        if generateMode, let generateOut, !diags.contains(where: { $0.severity == .error }) {
+            let (files, skipped) = validator.generate(rootsIn: rootsIn, targetModule: targetModule)
+            let written = writeGenerated(files, to: generateOut)
+            clock.mark("generate")
+            FileHandle.standardError.write(Data("[dagger-graph generate] \(files.count) archivos (\(written) reescritos) en \(generateOut)\n".utf8))
+            for s in skipped {
+                FileHandle.standardError.write(Data("  omitido: \(s)\n".utf8))
+            }
+        }
 
         emit(diags)
         if let outputSwift { writeStamp(outputSwift, diagnostics: diags, files: entries.count) }
@@ -230,6 +254,25 @@ struct DaggerGraphCommand {
             at: URL(fileURLWithPath: path).deletingLastPathComponent(), withIntermediateDirectories: true
         )
         try? content.write(toFile: path, atomically: true, encoding: .utf8)
+    }
+
+    /// Escribe solo los archivos cuyo contenido cambió y borra generados obsoletos (`DaggerGraph_*.swift`).
+    static func writeGenerated(_ files: [GeneratedFile], to dir: String) -> Int {
+        let fm = FileManager.default
+        try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        var written = 0
+        let names = Set(files.map(\.name))
+        for f in files {
+            let path = (dir as NSString).appendingPathComponent(f.name)
+            if let existing = try? String(contentsOfFile: path, encoding: .utf8), existing == f.content { continue }
+            try? f.content.write(toFile: path, atomically: true, encoding: .utf8)
+            written += 1
+        }
+        for stale in (try? fm.contentsOfDirectory(atPath: dir)) ?? []
+        where stale.hasPrefix("DaggerGraph_") && stale.hasSuffix(".swift") && !names.contains(stale) {
+            try? fm.removeItem(atPath: (dir as NSString).appendingPathComponent(stale))
+        }
+        return written
     }
 
     static func emit(_ diags: [Diagnostic]) {

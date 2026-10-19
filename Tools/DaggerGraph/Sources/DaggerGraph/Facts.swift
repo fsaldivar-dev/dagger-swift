@@ -59,6 +59,10 @@ struct Binding: Codable, Sendable {
     var isThrowing: Bool = false
     /// Tipo provisto tal como está escrito (`any Foo`, `Foo?` en precondiciones).
     var spelledType: String = ""
+    /// Tipo `@Inject` aislado a `@MainActor` (el código generado debe correr en el MainActor).
+    var isMainActor: Bool = false
+    /// Mensaje de `@Precondition("...")`, si lo tiene.
+    var reason: String? = nil
 }
 
 struct ModuleFact: Codable, Sendable {
