@@ -63,3 +63,18 @@ Benchmark honesto (Round 4, misma semántica: singleton + scoped cacheado + tran
 | Motor DAG (`resolve`) | 7.3–12 |
 | Round 3 "Explícito" (sin caché, no comparable) | 0.23–0.30 |
 | Arranque en frío ×1000: DAG / generado | ~11 ms / ~0.08 ms |
+
+### Multi-paquete (prototipo)
+```bash
+# En el paquete ServicesKit (CI o plugin): publica su manifiesto
+dagger-graph manifest --name ServicesKit --out ServicesKit.daggergraph.json Sources/Services Sources/Core
+# En la app: valida/genera uniendo los manifiestos de sus dependencias
+dagger-graph --manifest ServicesKit.daggergraph.json Sources/Features
+```
+El manifiesto (`schema: 1`) lista `provides`, `requires` (lo que el paquete no resuelve solo), `scopes`, `modules`
+y los hechos completos por archivo, así la raíz valida y genera sin re-parsear el otro paquete.
+Probado: `Features` solo → 6 errores; con el manifiesto de `Services`+`Core` → 0 (4 ms).
+
+Diseño pendiente (no implementado): publicar el manifiesto como recurso/artefacto del paquete y que el
+build-tool plugin lo descubra en las dependencias (hoy se pasa la ruta a mano); versionar por hash del
+contenido para detectar manifiestos obsoletos; nombres de tipos calificados por módulo (hoy por texto).

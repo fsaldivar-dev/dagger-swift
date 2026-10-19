@@ -143,3 +143,21 @@ enum TypeName {
         return true
     }
 }
+
+/// Manifiesto de grafo de un paquete/módulo (prototipo multi-paquete).
+/// Cada paquete publica qué provee, qué requiere y qué scopes usa; la raíz los une con `--manifest`.
+struct GraphManifest: Codable, Sendable {
+    static let schema = 1
+    var schema = GraphManifest.schema
+    var name: String
+    /// Tipos que este paquete sabe construir (@Module + @Inject).
+    var provides: [String]
+    /// Dependencias que este paquete NO resuelve por sí mismo (las debe proveer otro paquete o la raíz).
+    var requires: [String]
+    /// Scopes de los que dependen sus bindings.
+    var scopes: [String]
+    /// `@Module` declarados (con includes) para validar raíces que los usan.
+    var modules: [String]
+    /// Hechos completos por archivo (rutas relativas al paquete) para validar/generar sin re-parsear.
+    var files: [String: FileFacts]
+}

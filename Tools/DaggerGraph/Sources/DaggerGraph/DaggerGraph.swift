@@ -87,7 +87,8 @@ struct DaggerGraphCommand {
     static func main() async {
         var args = Array(CommandLine.arguments.dropFirst())
         let generateMode = args.first == "generate"
-        if generateMode { args.removeFirst() }
+        let manifestMode = args.first == "manifest"
+        if generateMode || manifestMode { args.removeFirst() }
         let timings = args.contains("--timings")
         let useCache = !args.contains("--no-cache")
         func option(_ name: String) -> String? {
@@ -105,6 +106,14 @@ struct DaggerGraphCommand {
         let targetModule = option("--target-module")
         var extraImports: [String] = []
         while let m = option("--import") { extraImports.append(m) }
+        // Multi-paquete: manifiestos externos que se unen al grafo (repetible).
+        var manifestPaths: [String] = []
+        while let m = option("--manifest") { manifestPaths.append(m) }
+        let manifestName = option("--name")
+        if manifestMode && (generateOut == nil || manifestName == nil) {
+            FileHandle.standardError.write(Data("uso: dagger-graph manifest --name <Paquete> --out <archivo.json> <dir>...\n".utf8))
+            exit(2)
+        }
         if generateMode && generateOut == nil {
             FileHandle.standardError.write(Data("uso: dagger-graph generate --out <dir> [--roots-in <prefijo>] [--target-module M] [--import M]... <dir>...\n".utf8))
             exit(2)
@@ -136,7 +145,7 @@ struct DaggerGraphCommand {
             && files.allSatisfy { f in cache.entries[f.path].map { $0.mtime == f.mtime && $0.size == f.size } ?? false }
         clock.mark("scan")
 
-        if unchanged, !generateMode, let diags = cache.diagnostics {
+        if unchanged, !generateMode, !manifestMode, manifestPaths.isEmpty, let diags = cache.diagnostics {
             emit(diags)
             if let outputSwift { writeStamp(outputSwift, diagnostics: diags, files: cache.entries.count) }
             if timings {
@@ -207,12 +216,36 @@ struct DaggerGraphCommand {
         let reused = prefiltered.filter { $0.2 == nil && $0.1.relevant }.count
 
         // 4. Validación
-        let allFacts = entries.compactMap { path, e in e.facts.map { (file: path, facts: $0) } }
+        var allFacts = entries.compactMap { path, e in e.facts.map { (file: path, facts: $0) } }
             .sorted { $0.file < $1.file }
+        let localFactCount = allFacts.count
+        for path in manifestPaths {
+            guard let data = FileManager.default.contents(atPath: path),
+                  let manifest = try? JSONDecoder().decode(GraphManifest.self, from: data),
+                  manifest.schema == GraphManifest.schema else {
+                FileHandle.standardError.write(Data("dagger-graph: no se pudo leer el manifiesto \(path)\n".utf8))
+                exit(2)
+            }
+            // Las raíces de otros paquetes no se re-validan aquí: solo aportan bindings y módulos.
+            for (file, var facts) in manifest.files.sorted(by: { $0.key < $1.key }) {
+                facts.roots = []
+                allFacts.append((file: "\(manifest.name)::\(file)", facts: facts))
+            }
+        }
         var validator = Validator(facts: allFacts)
         validator.extraImports = Set(extraImports)
-        let diags = validator.run()
+        // Los diagnósticos de archivos de manifiestos son del otro paquete: aquí solo los locales.
+        let diags = validator.run().filter { !$0.file.contains("::") }
         clock.mark("validate")
+
+        if manifestMode, let generateOut, let manifestName {
+            let local = Array(allFacts.prefix(localFactCount))
+            let manifest = makeManifest(name: manifestName, facts: local, roots: roots)
+            if let data = try? JSONEncoder.sorted.encode(manifest) {
+                try? data.write(to: URL(fileURLWithPath: generateOut))
+            }
+            FileHandle.standardError.write(Data("[dagger-graph manifest] \(manifestName): \(manifest.provides.count) provistos · \(manifest.requires.count) requeridos · \(manifest.scopes.count) scopes → \(generateOut)\n".utf8))
+        }
 
         if generateMode, let generateOut, !diags.contains(where: { $0.severity == .error }) {
             let (files, skipped) = validator.generate(rootsIn: rootsIn, targetModule: targetModule)
@@ -275,6 +308,32 @@ struct DaggerGraphCommand {
         return written
     }
 
+    static func makeManifest(name: String, facts: [(file: String, facts: FileFacts)], roots: [String]) -> GraphManifest {
+        var provides = Set<String>(), required = Set<String>(), scopes = Set<String>(), modules = Set<String>()
+        var files: [String: FileFacts] = [:]
+        for (file, f) in facts {
+            var rel = file
+            // Ruta relativa prefijada con el nombre del directorio raíz (evita choques entre directorios).
+            for r in roots where file.hasPrefix(r) {
+                let base = URL(fileURLWithPath: r).lastPathComponent
+                rel = base + "/" + String(file.dropFirst(r.count)).trimmingCharacters(in: ["/"])
+            }
+            files[rel] = f
+            for b in f.bindings {
+                provides.insert(b.provides)
+                if case .scope(let s) = b.lifetime { scopes.insert(s) }
+                b.deps.forEach { required.insert($0.type) }
+            }
+            f.modules.forEach { modules.insert($0.name) }
+        }
+        let validator = Validator(facts: facts)
+        let unresolved = required.filter { validator.providerIndices(for: $0) == nil && !Validator.builtins.contains($0) }
+        return GraphManifest(
+            name: name, provides: provides.sorted(), requires: unresolved.sorted(),
+            scopes: scopes.sorted(), modules: modules.sorted(), files: files
+        )
+    }
+
     static func emit(_ diags: [Diagnostic]) {
         guard !diags.isEmpty else { return }
         print(diags.map(\.rendered).joined(separator: "\n"))
@@ -303,5 +362,13 @@ struct DaggerGraphCommand {
             ))
         }
         return out
+    }
+}
+
+extension JSONEncoder {
+    static var sorted: JSONEncoder {
+        let e = JSONEncoder()
+        e.outputFormatting = [.sortedKeys, .prettyPrinted]
+        return e
     }
 }
