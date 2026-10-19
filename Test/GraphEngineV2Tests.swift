@@ -378,6 +378,8 @@ struct DaggerV2GraphTests {
 
         // El usuario hace 'pop' del UIViewController en UIKit -> ARC libera el controlador
         viewController = nil
+        // No-op en plataformas Apple; en Linux/Windows purga los dueños muertos.
+        ScopeContainer.drainDeallocatedOwners()
 
         // Sin llamar a teardown() manualmente, el Scope de Loans se cerró solo y liberó sus dependencias
         #expect(loansScope.isTornDown == true)

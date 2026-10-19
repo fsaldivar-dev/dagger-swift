@@ -6,7 +6,7 @@ import CompilerPluginSupport
 
 let package = Package(
     name: "DaggerSwift",
-    platforms: [.macOS(.v14), .iOS(.v17), .tvOS(.v17), .watchOS(.v10), .macCatalyst(.v17)],
+    platforms: [.macOS(.v14), .iOS(.v17), .tvOS(.v17), .watchOS(.v10), .visionOS(.v1), .macCatalyst(.v17)],
     products: [
         .library(
             name: "DaggerSwift",

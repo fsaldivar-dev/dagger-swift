@@ -58,6 +58,48 @@ public final class ScopeLifetimeToken: @unchecked Sendable {
     }
 }
 
+/// Registro de tokens de `autoTeardown` para plataformas sin runtime de Objective-C.
+/// Guarda el token mientras el dueño (referencia débil) siga vivo; `drain()` suelta los tokens
+/// de dueños muertos, lo que ejecuta `teardown()` en su `deinit`.
+final class OwnerTokenRegistry: @unchecked Sendable {
+    static let shared = OwnerTokenRegistry()
+
+    private struct Entry {
+        weak var owner: AnyObject?
+        let token: ScopeLifetimeToken
+    }
+
+    private let lock = NSLock()
+    private var entries: [Entry] = []
+
+    func retain(_ token: ScopeLifetimeToken, whileAlive owner: AnyObject) {
+        drain()
+        lock.lock()
+        entries.append(Entry(owner: owner, token: token))
+        lock.unlock()
+    }
+
+    @discardableResult
+    func drain() -> Int {
+        lock.lock()
+        guard !entries.isEmpty else {
+            lock.unlock()
+            return 0
+        }
+        var released: [ScopeLifetimeToken] = []
+        entries.removeAll { entry in
+            guard entry.owner == nil else { return false }
+            released.append(entry.token)
+            return true
+        }
+        lock.unlock()
+        // Los tokens se sueltan fuera del lock: su deinit ejecuta teardown().
+        let count = released.count
+        released.removeAll()
+        return count
+    }
+}
+
 /// Referencia débil a un objeto para auditar en tiempo real que las instancias de un Scope
 /// realmente mueren en RAM cuando se ejecuta `teardown()`.
 private struct WeakObjectBox {
@@ -240,6 +282,7 @@ public final class ScopeContainer: @unchecked Sendable {
         for scope: S.Type,
         modules: [any GraphModule.Type] = []
     ) -> ScopeContainer {
+        OwnerTokenRegistry.shared.drain()
         lock.lock()
         defer { lock.unlock() }
 
@@ -261,11 +304,25 @@ public final class ScopeContainer: @unchecked Sendable {
     @discardableResult
     public func autoTeardown(whenDeallocated owner: AnyObject) -> ScopeLifetimeToken {
         let token = ScopeLifetimeToken(container: self)
-        #if canImport(ObjectiveC)
+        #if canImport(ObjectiveC) && !DAGGER_NO_OBJC
         let key = Unmanaged.passUnretained(self).toOpaque()
         objc_setAssociatedObject(owner, key, token, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        #else
+        // Sin runtime de Objective-C (Linux/Windows) no hay hook de `deinit` del dueño:
+        // el token se retiene en un registro con referencia débil al dueño y se libera
+        // (disparando `teardown()`) en la siguiente purga.
+        OwnerTokenRegistry.shared.retain(token, whileAlive: owner)
         #endif
         return token
+    }
+
+    /// Purga los tokens de `autoTeardown(whenDeallocated:)` cuyos dueños ya murieron y cierra sus scopes.
+    /// En plataformas Apple es un no-op (el runtime de Objective-C lo hace al instante en el `deinit`).
+    /// En Linux/Windows se llama sola en cada `autoTeardown` y `makeChildScope`; llámala manualmente
+    /// si necesitas el cierre en un punto exacto.
+    @discardableResult
+    public static func drainDeallocatedOwners() -> Int {
+        OwnerTokenRegistry.shared.drain()
     }
 
     // MARK: - 1. Registro de Nodos de Dominio (@Singleton, @Scoped, @Provider)
