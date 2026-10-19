@@ -18,15 +18,17 @@ Responsable: **F** = Francisco · **C** = Claude (en la Mac de Francisco).
 
 ## 2. Deuda a cerrar pronto
 
-- [ ] Linux: guardar `objc_setAssociatedObject` con `#if canImport(ObjectiveC)` o quitar Linux de las notas — C
-- [ ] Agregar `.visionOS` a `platforms` (las notas lo prometen) — C
+- [x] Linux: guardar `objc_setAssociatedObject` con `#if canImport(ObjectiveC)` o quitar Linux de las notas — C
+- [x] Agregar `.visionOS` a `platforms` (las notas lo prometen) — C
 - [ ] Smoke test del consumidor en iOS Simulator dentro de `release.yml` — C
 - [ ] Revisar el "known issue" de los tests de Benchmarks (¿intencional?) — F/C
 
 ## 3. dagger-graph — Fase 2
 
-- [ ] Validación por raíz de composición (`expectGraph(...)`, `root(modules:)`, `includes`) — cierra el falso negativo de `testModuloFaltante` — C
-- [ ] Build-tool plugin (`prebuildCommand`) para validar en cada build (~3–5 ms con caché) — C
+- [x] Validación por raíz de composición (`expectGraph(...)`, `root(modules:)`, `includes`) — cierra el falso negativo de `testModuloFaltante` — C
+- [x] Build-tool plugin para validar en cada build (medido: +24–27 ms por build) — C
+- [x] `generate`: factories tipadas directas (generado 0.10 ms vs DAG 7.3–12 ms por 10.000 resoluciones) — C
+- [x] Prototipo multi-paquete (`manifest` / `--manifest`) — C
 
 ## 4. Opcional
 
