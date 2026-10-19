@@ -244,17 +244,18 @@ struct DaggerSwiftMacrosPlugin {
         for fn in functions {
             let closureParams: String
             let callArgs: String
+            let fnParams = fn.parameters.filter { !$0.hasDefault }
 
-            if fn.parameters.isEmpty {
+            if fnParams.isEmpty {
                 closureParams = ""
                 callArgs = ""
             } else {
-                let paramDecls = fn.parameters.enumerated().map { idx, p in
+                let paramDecls = fnParams.enumerated().map { idx, p in
                     let pName = p.name == "_" ? "arg\(idx)" : p.name
                     return "\(pName): \(p.type)"
                 }.joined(separator: ", ")
                 closureParams = "(\(paramDecls)) in"
-                callArgs = fn.parameters.enumerated().map { idx, p in
+                callArgs = fnParams.enumerated().map { idx, p in
                     let pName = p.name == "_" ? "arg\(idx)" : p.name
                     if p.externalLabel == "_" {
                         return pName
@@ -335,7 +336,8 @@ struct DaggerSwiftMacrosPlugin {
         let scopeArg = extractInjectScopeArgument(from: attrSource)
         let hasExplicitInit = containsExplicitInitializer(in: clean)
         let properties = parseInjectableStoredProperties(from: clean)
-        let initParams = hasExplicitInit ? parseExplicitInitParameters(from: clean) : properties
+        // Parámetros con valor por defecto (`retries: Int = 3`) no se piden al grafo: se usa el default.
+        let initParams = (hasExplicitInit ? parseExplicitInitParameters(from: clean) : properties).filter { !$0.hasDefault }
 
         var lines: [String] = []
 
@@ -426,6 +428,8 @@ struct DaggerSwiftMacrosPlugin {
         let externalLabel: String
         let name: String
         let type: String
+        /// `x: Int = 3`: el grafo NO lo resuelve; se usa el valor por defecto.
+        var hasDefault: Bool = false
     }
 
     private struct ParsedFunction {
@@ -720,14 +724,25 @@ struct DaggerSwiftMacrosPlugin {
                 continue
             }
             let afterKeyword = String(trimmed[range.upperBound...])
-            guard let colon = afterKeyword.firstIndex(of: ":") else { continue }
-            let propName = String(afterKeyword[..<colon]).trimmingCharacters(in: .whitespacesAndNewlines)
-            var propType = String(afterKeyword[afterKeyword.index(after: colon)...])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if propType.hasPrefix("@escaping ") {
-                propType = String(propType.dropFirst("@escaping ".count))
+            // `let a, b: Int` (ambos Int) y `let a: Int, b: String` (cada uno con su tipo).
+            var pendingNames: [String] = []
+            for part in splitByTopLevelComma(afterKeyword) {
+                let piece = part.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard let colon = piece.firstIndex(of: ":") else {
+                    if !piece.isEmpty { pendingNames.append(piece) }
+                    continue
+                }
+                let propName = String(piece[..<colon]).trimmingCharacters(in: .whitespacesAndNewlines)
+                var propType = String(piece[piece.index(after: colon)...])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if propType.hasPrefix("@escaping ") {
+                    propType = String(propType.dropFirst("@escaping ".count))
+                }
+                for name in pendingNames + [propName] {
+                    props.append(ParsedParam(externalLabel: name, name: name, type: propType))
+                }
+                pendingNames.removeAll()
             }
-            props.append(ParsedParam(externalLabel: propName, name: propName, type: propType))
         }
         return props
     }
@@ -741,9 +756,11 @@ struct DaggerSwiftMacrosPlugin {
             let lhs = String(trimmed[..<colon]).trimmingCharacters(in: .whitespacesAndNewlines)
             var rhs = String(trimmed[trimmed.index(after: colon)...]).trimmingCharacters(in: .whitespacesAndNewlines)
 
-            // Quitar valor por defecto si existe
+            // Quitar valor por defecto si existe (y recordarlo: ese parámetro no se resuelve del grafo)
+            var hasDefault = false
             if let eq = rhs.firstIndex(of: "=") {
                 rhs = String(rhs[..<eq]).trimmingCharacters(in: .whitespacesAndNewlines)
+                hasDefault = true
             }
             if rhs.hasPrefix("@escaping ") {
                 rhs = String(rhs.dropFirst("@escaping ".count)).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -752,7 +769,7 @@ struct DaggerSwiftMacrosPlugin {
             let nameTokens = lhs.split(whereSeparator: { $0.isWhitespace }).map(String.init)
             let externalLabel = nameTokens.first ?? "_"
             let internalName = nameTokens.last ?? externalLabel
-            params.append(ParsedParam(externalLabel: externalLabel, name: internalName, type: rhs))
+            params.append(ParsedParam(externalLabel: externalLabel, name: internalName, type: rhs, hasDefault: hasDefault))
         }
         return params
     }

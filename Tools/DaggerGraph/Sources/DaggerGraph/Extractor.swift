@@ -102,7 +102,8 @@ final class FactExtractor: SyntaxVisitor {
 
     private func injectDependencies(_ members: MemberBlockSyntax) -> [Dependency] {
         if let initDecl = members.members.lazy.compactMap({ $0.decl.as(InitializerDeclSyntax.self) }).first {
-            return initDecl.signature.parameterClause.parameters.map {
+            // Igual que la macro: parámetros con valor por defecto no se resuelven del grafo.
+            return initDecl.signature.parameterClause.parameters.filter { $0.defaultValue == nil }.map {
                 Dependency(
                     type: TypeName.normalize($0.type.trimmedDescription),
                     loc: loc($0),
@@ -117,8 +118,15 @@ final class FactExtractor: SyntaxVisitor {
             if v.modifiers.contains(where: { ["static", "class"].contains($0.name.text) }) { continue }
             let skipAttrs = ["Published", "State", "Binding"]
             if v.attributes.contains(where: { attrName($0).map(skipAttrs.contains) ?? false }) { continue }
-            for b in v.bindings {
-                guard b.initializer == nil, b.accessorBlock == nil, let t = b.typeAnnotation?.type else { continue }
+            // `let a, b: Int`: `a` no tiene anotación; hereda el tipo de la siguiente que sí la tiene.
+            var inherited: TypeSyntax?
+            var typed: [(PatternBindingSyntax, TypeSyntax)] = []
+            for b in v.bindings.reversed() {
+                if let t = b.typeAnnotation?.type { inherited = t }
+                if let t = b.typeAnnotation?.type ?? inherited { typed.append((b, t)) }
+            }
+            for (b, t) in typed.reversed() {
+                guard b.initializer == nil, b.accessorBlock == nil else { continue }
                 deps.append(Dependency(
                     type: TypeName.normalize(t.trimmedDescription),
                     loc: loc(b),
@@ -170,7 +178,7 @@ final class FactExtractor: SyntaxVisitor {
                     lifetime: lifetime,
                     origin: "\(module).\(fn.name.text)()",
                     loc: loc(fn.name),
-                    deps: fn.signature.parameterClause.parameters.map {
+                    deps: fn.signature.parameterClause.parameters.filter { $0.defaultValue == nil }.map {
                         Dependency(
                             type: TypeName.normalize($0.type.trimmedDescription),
                             loc: loc($0),
