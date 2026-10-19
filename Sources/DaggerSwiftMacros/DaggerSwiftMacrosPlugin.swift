@@ -102,7 +102,17 @@ struct DaggerSwiftMacrosPlugin {
         ])
     }
 
+    /// El estado de diagnósticos es por expansión: se serializan (el compilador ya manda un mensaje a la
+    /// vez; el lock protege usos concurrentes, p. ej. tests en paralelo).
+    private static let expansionLock = NSLock()
+
     static func handleExpandAttachedMacro(_ payload: [String: Any]) -> [String: Any] {
+        expansionLock.lock()
+        defer { expansionLock.unlock() }
+        return expandAttachedMacroLocked(payload)
+    }
+
+    private static func expandAttachedMacroLocked(_ payload: [String: Any]) -> [String: Any] {
         let macroInfo = payload["macro"] as? [String: Any]
         let typeName = (macroInfo?["typeName"] as? String) ?? ""
         let macroRole = (payload["macroRole"] as? String) ?? ""

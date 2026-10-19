@@ -68,10 +68,10 @@ ni los casos de uso. Y solo deben llegar a runtime los errores que dependen del 
 ## 8. Macros (pendiente de decisión de F)
 
 - [x] Medido: swift-syntax en el target de macros = 2–2.5 s con prebuilts del compilador exacto (603.0.2 / Swift 6.3.3), pero 15 s debug / 171 s release sin prebuilts (otro Xcode). Hoy: 0.7–1.5 s, cero dependencias.
-- [ ] Decidir: migrar a SwiftSyntax vs. arreglar el parser actual (recomendado) — F
-- [ ] Bugs de la macro actual: `let a, b: Int` no compila; `init` con defaults resuelve el parámetro del grafo en vez de usar el default; función `async` en @Module da un error confuso — C
-- [ ] Diagnósticos claros desde la macro (campo `diagnostics` del protocolo del plugin) — C
-- [ ] Tests de expansión sin swift-syntax (mensajes del protocolo del plugin) — C
+- [x] Decidido (F): NO migrar a SwiftSyntax; se arregla el parser actual (cero dependencias, macro ~1 s)
+- [x] Bugs de la macro actual: `let a, b: Int` no compila; `init` con defaults resuelve el parámetro del grafo en vez de usar el default; función `async` en @Module da un error confuso — C
+- [x] Diagnósticos claros desde la macro (campo `diagnostics` del protocolo del plugin) — C
+- [x] Tests de expansión sin swift-syntax (mensajes del protocolo del plugin) — C
 
 ## 9. Plataformas
 

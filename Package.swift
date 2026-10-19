@@ -59,6 +59,13 @@ let package = Package(
             path: "Sources/DaggerCLI"
         ),
 
+        // Tests de expansión de las macros: llaman al plugin con mensajes del protocolo (sin swift-syntax).
+        .testTarget(
+            name: "DaggerSwiftMacrosTests",
+            dependencies: ["DaggerSwiftMacros"],
+            path: "MacroTests"
+        ),
+
         // Target de pruebas para validar las macros y el motor de grafo (v1 y v2)
         .testTarget(
             name: "DaggerSwiftTest",
