@@ -1,0 +1,71 @@
+# Release: el runtime se distribuye como BINARIO (XCFramework) y dagger-graph como artifactbundle.
+# `main` sigue en fuente; solo el commit al que apunta el tag usa binaryTarget(url:checksum:).
+#
+# Flujo al hacer push de un tag vX.Y.Z (sobre un commit de main):
+#   1. Tests del paquete.
+#   2. scripts/release-dry-run.sh: XCFramework + artifactbundle + checksums + Package.swift de
+#      release + verificación con un consumidor real (binaryTarget(path:)).
+#   3. GitHub Release en borrador con los zips.
+#   4. Commit solo-para-el-tag con el Package.swift binario; el tag se mueve a ese commit.
+#   5. Se publica el Release.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    env:
+      VERSION: ${{ github.ref_name }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      OUT: .build/release-artifacts
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      # Mover el tag con GITHUB_TOKEN no vuelve a disparar workflows; esto cubre el caso de un PAT.
+      - name: Guard (el tag no debe apuntar ya a un commit de release)
+        run: |
+          if git log -1 --format=%s | grep -q '^release:'; then
+            echo "El tag $VERSION ya apunta a un commit de release; nada que hacer."
+            exit 1
+          fi
+
+      - name: Test
+        run: swift test
+
+      - name: Construir y verificar artefactos (idéntico al ensayo local)
+        run: scripts/release-dry-run.sh "$VERSION"
+
+      - name: GitHub Release (borrador) con assets
+        run: |
+          gh release create "$VERSION" --draft --verify-tag --generate-notes \
+            --title "DaggerSwift $VERSION" \
+            "$OUT/DaggerSwiftCore.xcframework.zip" \
+            "$OUT/dagger-graph.artifactbundle.zip"
+
+      - name: Commit solo-para-el-tag + mover el tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --detach
+          cp "$OUT/Package.release.swift" Package.swift
+          git commit -am "release: $VERSION (binaryTarget DaggerSwiftCore + dagger-graph)"
+          git tag -f "$VERSION"
+          git push -f origin "refs/tags/$VERSION"
+
+      - name: Publicar Release
+        run: gh release edit "$VERSION" --draft=false

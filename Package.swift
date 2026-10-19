@@ -29,10 +29,19 @@ let package = Package(
             path: "Sources/DaggerSwiftMacros"
         ),
 
-        // Biblioteca que expone el motor del grafo y las macros como parte de su API
+        // Runtime puro (motor del grafo, scopes, SwiftUI). En los tags de release este target
+        // se sustituye por un `.binaryTarget` (XCFramework) — ver scripts/release-dry-run.sh.
+        .target(
+            name: "DaggerSwiftCore",
+            dependencies: [],
+            path: "Sources/DaggerSwiftCore"
+        ),
+
+        // Target fuente delgado: declaraciones de macros + `@_exported import DaggerSwiftCore`.
+        // Las macros no pueden ser binarias en SwiftPM, así que esto siempre compila desde fuente.
         .target(
             name: "DaggerSwift",
-            dependencies: ["DaggerSwiftMacros"],
+            dependencies: ["DaggerSwiftCore", "DaggerSwiftMacros"],
             path: "Sources/DaggerSwift"
         ),
 

@@ -1,49 +1,19 @@
 //
-//  Module.swift
+//  Macros.swift
 //  DaggerSwift
 //
-//  Created by Saldivar on 18/10/24.
-//  Evolved to DaggerSwift v2 (Declarative Macros + DAG Engine) on 16/10/26.
+//  Target fuente DELGADO: solo declaraciones de macros + re-export del runtime.
+//  Las macros no pueden distribuirse como binario en SwiftPM, así que en el paquete de
+//  release `DaggerSwiftCore` es un XCFramework y este archivo (más `DaggerSwiftMacros`)
+//  se compila siempre desde fuente (<1 s, cero dependencias externas).
+//  Las expansiones usan `DaggerSwift.ScopeContainer`, `DaggerSwift.Injectable`, etc.:
+//  la búsqueda calificada por módulo atraviesa el `@_exported import`.
 //
-import Foundation
 
-@MainActor
-public protocol Modulable: GraphScope { }
-
-@MainActor
-public protocol Component {
-    associatedtype Module: Modulable
-    static var module: Module.Type { get }
-}
-
-public extension Component {
-    static var module: Module.Type { Module.self }
-}
-
-@MainActor
-public final class SingletonContainer {
-    public static let shared = SingletonContainer()
-    private var instances: [String: Any] = [:]
-
-    public init() {}
-
-    public func resolve<T>(_ type: T.Type, initializer: @MainActor () -> T) -> T {
-        let key = String(reflecting: T.self)
-        if let instance = instances[key] as? T {
-            return instance
-        } else {
-            let newInstance = initializer()
-            instances[key] = newInstance
-            return newInstance
-        }
-    }
-
-    public func reset() {
-        instances.removeAll()
-    }
-}
+@_exported import DaggerSwiftCore
 
 // MARK: - DaggerSwift v1 & v2 Unified Macros
+
 
 /// Dagger 1: `@Singleton(MyServiceImpl()) static var myService: MyService`
 @attached(accessor)
@@ -151,22 +121,6 @@ public macro Module<S: GraphScope>(_ version: Double, scope: S.Type, includes: [
     type: "ModuleMacro"
 )
 
-/// Paleta estándar de versiones de `@Module` integrada en `DaggerSwift` (estilo `CodingKeys`).
-public enum ModulePalette: String, CaseIterable, Identifiable, Sendable, CustomStringConvertible {
-    case v0_1 = "0.1"
-    case v1_0 = "1.0"
-    case v2_0 = "2.0"
-
-    public var id: String { rawValue }
-
-    public var buttonLabel: String {
-        "Module(\(rawValue))"
-    }
-
-    public var description: String {
-        buttonLabel
-    }
-}
 
 /// Sintetiza automáticamente en un `GraphScope` el enumerador `Palette` (`ModulePalette`)
 /// y el selector estático `module(for:)` en tiempo de compilación (estilo `CodingKeys`).
