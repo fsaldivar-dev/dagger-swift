@@ -68,11 +68,29 @@ consumer_build() { # $1 = etiqueta, $2 = ruta del paquete DaggerSwift
   local t; t=$(now)
   DAGGER_SWIFT_PATH="$2" swift build -c release --package-path "$dir" >"$dir.log" 2>&1 || { tail -30 "$dir.log"; exit 1; }
   local secs; secs=$(elapsed "$t")
-  local run; run="$(DAGGER_SWIFT_PATH="$2" swift run -c release --skip-build --package-path "$dir" ReleaseConsumer 2>&1 | tail -1)"
-  SUMMARY+=("consumidor ($1): build limpio release $secs s → $run")
+  local run; run="$(DAGGER_SWIFT_PATH="$2" swift test --package-path "$dir" 2>&1 | grep -E 'Test run with' | tail -1)"
+  [[ "$run" == *"passed"* ]] || { echo "✘ tests del consumidor ($1): $run" >&2; exit 1; }
+  SUMMARY+=("consumidor ($1): build limpio release $secs s · macOS: $run")
 }
 consumer_build fuente "$ROOT"
 consumer_build binario "$RELCO"
+
+# iOS Simulator: mismos tests del consumidor contra el XCFramework (si el slice ios-sim existe).
+if [ -d "$RELCO/Binaries/DaggerSwiftCore.xcframework/ios-arm64_x86_64-simulator" ]; then
+  SIM_ID="$(xcrun simctl list devices available | grep -m1 -E 'iPhone' | sed -E 's/.*\(([0-9A-F-]{36})\).*/\1/')"
+  T=$(now)
+  if (cd "$OUT/consumer-binario" && DAGGER_SWIFT_PATH="$RELCO" xcodebuild test -quiet \
+        -scheme ReleaseConsumer -destination "id=$SIM_ID" \
+        -derivedDataPath "$OUT/consumer-ios-dd" >"$OUT/consumer-ios.log" 2>&1); then
+    SUMMARY+=("consumidor (binario) en iOS Simulator: tests en verde ($(elapsed "$T") s)")
+  else
+    grep -E "error:|failed|✘" "$OUT/consumer-ios.log" | head -20 >&2
+    echo "✘ tests del consumidor en iOS Simulator (log: $OUT/consumer-ios.log)" >&2
+    exit 1
+  fi
+else
+  SUMMARY+=("iOS Simulator: omitido (el XCFramework no tiene el slice ios-sim)")
+fi
 
 # dagger-graph desde el artifactbundle vía command plugin (sin compilar swift-syntax).
 T=$(now)
