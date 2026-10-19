@@ -168,7 +168,11 @@ extension RuntimeFixesTests {
         let group = DispatchGroup()
         let lock = NSLock()
         nonisolated(unsafe) var errors: [Error] = []
-        for work in [{ _ = try root.resolve(CycleFixA.self) }, { _ = try root.resolve(CycleFixB.self) }] {
+        let works: [@Sendable () throws -> Void] = [
+            { _ = try root.resolve(CycleFixA.self) },
+            { _ = try root.resolve(CycleFixB.self) },
+        ]
+        for work in works {
             DispatchQueue.global().async(group: group) {
                 do { try work() } catch { lock.lock(); errors.append(error); lock.unlock() }
             }

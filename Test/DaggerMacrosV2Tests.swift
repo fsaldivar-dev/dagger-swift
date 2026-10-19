@@ -121,7 +121,9 @@ struct DaggerMacrosV2Tests {
         #expect(vm1 !== vm2)              // @Inject sin scope = transient
         #expect(vm1.repo === vm2.repo)    // @Inject(scope:) = compartido en el módulo
 
-        weak let weakRepo: MacroLoansRepository? = vm1.repo
+        // `weak var` + asignación (no `weak let`): `weak let` requiere Swift 6.2+ y el CI de Linux usa 6.1.
+        weak var weakRepo: MacroLoansRepository?
+        weakRepo = vm1.repo
         _ = consume vm1
         _ = consume vm2
         let leaks = loans.teardown()
