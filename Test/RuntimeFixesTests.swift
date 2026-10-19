@@ -61,3 +61,164 @@ struct RuntimeFixesTests {
         #expect(ok)
     }
 }
+
+// MARK: - f. Factories fuera del lock
+
+final class SlowFixService: @unchecked Sendable {
+    nonisolated(unsafe) static var initCount = 0
+    init() { Self.initCount += 1 }
+}
+/// Tipo exclusivo del test de "una sola construcción" (los tests corren en paralelo: no compartir contadores).
+final class OnceFixService: @unchecked Sendable {
+    nonisolated(unsafe) static var initCount = 0
+    init() { Self.initCount += 1 }
+}
+final class FastFixService: @unchecked Sendable {
+    init() {}
+}
+final class CycleFixA: @unchecked Sendable { init() {} }
+final class CycleFixB: @unchecked Sendable { init() {} }
+
+// MARK: - h. Precondiciones antes de construir
+
+final class HeavyFixDependency: @unchecked Sendable {
+    nonisolated(unsafe) static var initCount = 0
+    init() { Self.initCount += 1 }
+}
+
+struct FixSession: Precondition {
+    let user: String
+}
+
+@Inject
+final class ProtectedFixInteractor: @unchecked Sendable {
+    // La precondición va en SEGUNDO lugar a propósito.
+    let heavy: HeavyFixDependency
+    let session: FixSession
+}
+
+final class FixAuthState: @unchecked Sendable {
+    var user: String?
+    nonisolated(unsafe) static var validatorCalls = 0
+}
+
+extension RuntimeFixesTests {
+
+    @Test("f. Una factory lenta NO bloquea resoluciones no relacionadas en otros hilos")
+    func slowFactoryDoesNotSerializeUnrelatedResolutions() throws {
+        let root = ScopeContainer.root()
+        let started = DispatchSemaphore(value: 0)
+        let otherDone = DispatchSemaphore(value: 0)
+        nonisolated(unsafe) var sawOtherWhileBuilding = false
+
+        root.provideSingleton(SlowFixService.self) { () -> SlowFixService in
+            started.signal()
+            // Con el lock global tomado, el otro hilo no podía avanzar: esto expiraba.
+            sawOtherWhileBuilding = otherDone.wait(timeout: .now() + 2) == .success
+            return SlowFixService()
+        }
+        root.provideSingleton(FastFixService.self) { FastFixService() }
+
+        let group = DispatchGroup()
+        DispatchQueue.global().async(group: group) { _ = try? root.resolve(SlowFixService.self) }
+        started.wait()
+        DispatchQueue.global().async(group: group) {
+            _ = try? root.resolve(FastFixService.self)
+            otherDone.signal()
+        }
+        #expect(group.wait(timeout: .now() + 5) == .success)
+        #expect(sawOtherWhileBuilding)
+    }
+
+    @Test("f. @Singleton concurrente se construye exactamente una vez (doble verificación)")
+    func concurrentSingletonIsBuiltOnce() throws {
+        OnceFixService.initCount = 0
+        let root = ScopeContainer.root()
+        root.provideSingleton(OnceFixService.self) { () -> OnceFixService in
+            Thread.sleep(forTimeInterval: 0.05)
+            return OnceFixService()
+        }
+        let lock = NSLock()
+        nonisolated(unsafe) var ids = Set<ObjectIdentifier>()
+        DispatchQueue.concurrentPerform(iterations: 32) { _ in
+            let s = try! root.resolve(OnceFixService.self)
+            lock.lock(); ids.insert(ObjectIdentifier(s)); lock.unlock()
+        }
+        #expect(OnceFixService.initCount == 1)
+        #expect(ids.count == 1)
+    }
+
+    @Test("f. Ciclo entre hilos (A→B en un hilo, B→A en otro) lanza circularDependency, no deadlock")
+    func crossThreadCycleThrowsInsteadOfDeadlocking() throws {
+        let root = ScopeContainer.root()
+        let aStarted = DispatchSemaphore(value: 0)
+        let bStarted = DispatchSemaphore(value: 0)
+        root.provideSingleton(CycleFixA.self) { () throws -> CycleFixA in
+            aStarted.signal()
+            _ = bStarted.wait(timeout: .now() + 1)
+            _ = try root.resolve(CycleFixB.self)
+            return CycleFixA()
+        }
+        root.provideSingleton(CycleFixB.self) { () throws -> CycleFixB in
+            bStarted.signal()
+            _ = aStarted.wait(timeout: .now() + 1)
+            _ = try root.resolve(CycleFixA.self)
+            return CycleFixB()
+        }
+        let group = DispatchGroup()
+        let lock = NSLock()
+        nonisolated(unsafe) var errors: [Error] = []
+        for work in [{ _ = try root.resolve(CycleFixA.self) }, { _ = try root.resolve(CycleFixB.self) }] {
+            DispatchQueue.global().async(group: group) {
+                do { try work() } catch { lock.lock(); errors.append(error); lock.unlock() }
+            }
+        }
+        #expect(group.wait(timeout: .now() + 5) == .success)
+        #expect(errors.count == 2)
+        #expect(errors.allSatisfy { if case GraphError.circularDependency = $0 { true } else { false } })
+    }
+
+    // MARK: g
+
+    @Test("g. Un ancestro que registra después invalida la caché de recetas de los nietos")
+    func ancestorRegistrationInvalidatesDescendantCaches() throws {
+        enum ChildFixScope: GraphScope {}
+        enum GrandchildFixScope: GraphScope {}
+        let root = ScopeContainer.root()
+        root.provide(String.self) { "root" }
+        let child = root.makeChildScope(for: ChildFixScope.self)
+        let grandchild = child.makeChildScope(for: GrandchildFixScope.self)
+        #expect(try grandchild.resolve(String.self) == "root")
+
+        child.provide(String.self) { "child" }
+        #expect(try grandchild.resolve(String.self) == "child")
+    }
+
+    // MARK: h
+
+    @Test("h. @Precondition en segundo parámetro se evalúa ANTES de construir el primero (0 allocations)")
+    func preconditionIsEvaluatedBeforeAnyDependency() throws {
+        HeavyFixDependency.initCount = 0
+        FixAuthState.validatorCalls = 0
+        let auth = FixAuthState()
+        let root = ScopeContainer.root()
+        root.provide(HeavyFixDependency.self) { HeavyFixDependency() }
+        root.providePrecondition(FixSession.self, reasonIfUnmet: "sin sesión") { () -> FixSession? in
+            FixAuthState.validatorCalls += 1
+            return auth.user.map { FixSession(user: $0) }
+        }
+
+        #expect(throws: GraphError.unmetPrecondition(type: String(reflecting: FixSession.self), reason: "sin sesión")) {
+            _ = try root.resolve(ProtectedFixInteractor.self)
+        }
+        #expect(HeavyFixDependency.initCount == 0)
+
+        auth.user = "fsaldivar-dev"
+        FixAuthState.validatorCalls = 0
+        let interactor = try root.resolve(ProtectedFixInteractor.self)
+        #expect(interactor.session.user == "fsaldivar-dev")
+        #expect(HeavyFixDependency.initCount == 1)
+        // El valor evaluado por adelantado se reutiliza: el validador corre una sola vez por resolución.
+        #expect(FixAuthState.validatorCalls == 1)
+    }
+}

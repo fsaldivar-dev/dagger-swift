@@ -70,6 +70,10 @@ final class OwnerTokenRegistry: @unchecked Sendable {
     }
 
     private let lock = NSLock()
+    /// Serializa las purgas completas (incluido el teardown) para que `drain()` sea determinista:
+    /// al volver, cualquier purga concurrente ya terminó de cerrar sus scopes. Recursivo porque
+    /// `onScopeTeardown` puede volver a crear scopes.
+    private let drainLock = NSRecursiveLock()
     private var entries: [Entry] = []
 
     func retain(_ token: ScopeLifetimeToken, whileAlive owner: AnyObject) {
@@ -81,6 +85,8 @@ final class OwnerTokenRegistry: @unchecked Sendable {
 
     @discardableResult
     func drain() -> Int {
+        drainLock.lock()
+        defer { drainLock.unlock() }
         lock.lock()
         guard !entries.isEmpty else {
             lock.unlock()
@@ -201,8 +207,22 @@ public final class ScopeContainer: @unchecked Sendable {
     /// Rastreador de objetos creados en este Scope para detectar retain cycles al cerrar el Scope.
     private var leakTracker: [WeakObjectBox] = []
 
-    /// Pila compartida en la raíz para detectar ciclos de dependencias (`A -> B -> A`).
-    private var resolutionStack: [ObjectIdentifier] = []
+    /// Generación de registros del árbol (solo se usa en la raíz). Sube con cada registro o scope compatible
+    /// en CUALQUIER caja, invalidando las cachés de todos los descendientes.
+    private var generation: UInt64 = 0
+
+    /// Generación con la que se llenaron las cachés de esta caja.
+    private var cacheGeneration: UInt64 = 0
+
+    /// Construcciones `@Scoped`/`@Singleton` en curso en esta caja. Las factories corren SIN lock;
+    /// los demás hilos que pidan el mismo tipo esperan a que termine (doble verificación).
+    private var pending: [ObjectIdentifier: PendingBuild] = [:]
+
+    /// Caché por tipo: ¿su subgrafo estático contiene alguna `@Precondition`?
+    private var subgraphHasPreconditions: [ObjectIdentifier: Bool] = [:]
+
+    /// Raíz del árbol (`nil` si esta caja es la raíz).
+    private let rootRef: ScopeContainer?
 
     /// Último camino de resolución donde ocurrió un error (para diagnóstico en `DaggerSwiftTesting`).
     private var lastFailurePath: [String] = []
@@ -219,6 +239,7 @@ public final class ScopeContainer: @unchecked Sendable {
         self.parent = parent
         self.auditLeaks = auditLeaks
         self.lock = parent?.lock ?? NSRecursiveLock()
+        self.rootRef = parent.map { $0.rootRef ?? $0 }
     }
 
     /// Declara que esta caja de Scope también satisface `scope` (para evolución `V1 -> V2` o variantes por país).
@@ -227,7 +248,7 @@ public final class ScopeContainer: @unchecked Sendable {
         defer { lock.unlock() }
         guard self.scopeID != GlobalScope.scopeID else { return }
         compatibleScopeIDs.insert(S.scopeID)
-        cachedScopeBoxes.removeAll(keepingCapacity: true)
+        rootContainer.generation &+= 1
     }
 
     /// Crea un contenedor raíz (`GlobalScope`) opcionalmente cargando una lista de módulos base.
@@ -306,7 +327,11 @@ public final class ScopeContainer: @unchecked Sendable {
         let token = ScopeLifetimeToken(container: self)
         #if canImport(ObjectiveC) && !DAGGER_NO_OBJC
         let key = Unmanaged.passUnretained(self).toOpaque()
-        objc_setAssociatedObject(owner, key, token, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        // El puente a `Any` de objc_setAssociatedObject puede dejar al dueño en el autorelease pool:
+        // en el hilo principal eso retrasaba su `deinit` (y el teardown) hasta el fin del run loop.
+        autoreleasepool {
+            objc_setAssociatedObject(owner, key, token, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        }
         #else
         // Sin runtime de Objective-C (Linux/Windows) no hay hook de `deinit` del dueño:
         // el token se retiene en un registro con referencia débil al dueño y se libera
@@ -451,56 +476,80 @@ public final class ScopeContainer: @unchecked Sendable {
     // MARK: - Motor de Resolución Topológica (DFS + Ruteo de Scopes)
 
     /// Resuelve un tipo `T` de forma thread-safe recorriendo el grafo en profundidad:
-    /// 1. Verifica que no existan ciclos (`A -> B -> A`).
-    /// 2. Busca la receta en el Scope actual o subiendo hacia los padres (`parent`).
-    /// 3. Si es `@Scoped` o `@Singleton`, sube hasta la caja dueña (`findBoxUpwards`) y resuelve desde ella.
+    /// 1. Evalúa primero TODAS las `@Precondition` del subgrafo (0 allocations si alguna falla).
+    /// 2. Verifica que no existan ciclos (`A -> B -> A`), también entre hilos.
+    /// 3. Busca la receta en el Scope actual o subiendo hacia los padres (`parent`).
+    /// 4. Si es `@Scoped` o `@Singleton`, sube hasta la caja dueña (`findBoxUpwards`) y construye una sola vez.
+    /// Las factories del usuario se ejecutan SIN el lock tomado.
     public func resolve<T>(_ type: T.Type = T.self) throws -> T {
         if type == ScopeContainer.self, let selfT = self as? T {
             return selfT
         }
-
+        if let context = ResolutionContext.active {
+            return try resolve(type, context: context)
+        }
         lock.lock()
-        defer { lock.unlock() }
+        rootContainer.lastFailurePath.removeAll(keepingCapacity: true)
+        lock.unlock()
+        return try ResolutionContext.run { context in
+            try evaluatePreconditionsUpFront(for: type, context: context)
+            return try resolve(type, context: context)
+        }
+    }
 
+    private func resolve<T>(_ type: T.Type, context: ResolutionContext) throws -> T {
+        if type == ScopeContainer.self, let selfT = self as? T {
+            return selfT
+        }
         let key = ObjectIdentifier(type)
-        let typeName = String(reflecting: type)
-        let rootBox = self.rootContainer
 
-        if rootBox.resolutionStack.isEmpty {
-            rootBox.lastFailurePath.removeAll(keepingCapacity: true)
+        // 1. Detección de ciclos en la resolución actual
+        if context.stack.contains(key) {
+            let chain = context.names + [String(reflecting: type)]
+            recordFailure(chain, overwrite: true)
+            throw GraphError.circularDependency(chain: chain)
         }
 
-        // 1. Detección de ciclos en el grafo
-        if rootBox.resolutionStack.contains(key) {
-            let cycleChain = rootBox.buildStackNames() + [typeName]
-            rootBox.lastFailurePath = cycleChain
-            throw GraphError.circularDependency(chain: cycleChain)
-        }
-
-        // 2. Buscar qué contenedor tiene registrada la receta (este o algún ancestro).
-        //    Si no existe pero el tipo es @Inject (Injectable), se auto-registra Just-In-Time.
-        if findRecipeUpwards(for: key) == nil, let injectable = type as? any Injectable.Type {
-            injectable.register(in: self)
-        }
-        guard let (_, recipe) = findRecipeUpwards(for: key) else {
-            rootBox.lastFailurePath = rootBox.buildStackNames() + [typeName]
+        // 2. Receta en este contenedor o algún ancestro; si no existe pero el tipo es @Inject, Just-In-Time.
+        guard let recipe = recipeRegisteringJustInTime(for: type, key: key) else {
+            let typeName = String(reflecting: type)
+            recordFailure(context.names + [typeName], overwrite: true)
             throw GraphError.unregisteredDependency(type: typeName, searchedFromScope: self.scopeID)
         }
 
         // 3. Ejecutar según el ciclo de vida del nodo
         switch recipe.lifetime {
-        case .transient, .businessRule, .precondition:
-            return try executeWithCycleTracking(key: key, root: rootBox) {
-                guard let instance = try recipe.build(self) as? T else {
-                    throw GraphError.unregisteredDependency(type: typeName, searchedFromScope: self.scopeID)
-                }
-                return instance
+        case .transient, .businessRule:
+            return try build(recipe, as: type, key: key, in: self, context: context)
+
+        case .precondition:
+            if let evaluated = context.preconditionValues[key] as? T {
+                return evaluated
             }
+            let value = try build(recipe, as: type, key: key, in: self, context: context)
+            context.preconditionValues[key] = value
+            return value
 
         case .scoped(let targetScopeID):
-            // Subir desde el contenedor actual para encontrar la caja dueña del Scope
+            return try resolveScoped(recipe, as: type, key: key, scope: targetScopeID, context: context)
+        }
+    }
+
+    /// `@Scoped` / `@Singleton`: una sola instancia por caja dueña, construida fuera del lock.
+    private func resolveScoped<T>(
+        _ recipe: GraphRecipe,
+        as type: T.Type,
+        key: ObjectIdentifier,
+        scope targetScopeID: ScopeID,
+        context: ResolutionContext
+    ) throws -> T {
+        while true {
+            lock.lock()
+            // Subir desde el contenedor actual para encontrar la caja dueña del Scope.
             guard let ownerBox = findBoxUpwards(matching: targetScopeID), !ownerBox.isTornDown else {
-                rootBox.lastFailurePath = rootBox.buildStackNames() + [typeName]
+                lock.unlock()
+                let typeName = String(reflecting: type)
+                recordFailure(context.names + [typeName], overwrite: true)
                 throw GraphError.scopeNotActive(
                     requestedScope: targetScopeID,
                     currentScope: self.scopeID,
@@ -510,19 +559,149 @@ public final class ScopeContainer: @unchecked Sendable {
 
             // Si ya existe en la caja dueña, devolverla en O(1)
             if let cached = ownerBox.instances[key] as? T {
+                lock.unlock()
                 return cached
             }
 
-            // Construimos usando 'ownerBox' como resolver para garantizar la Regla de Oro:
-            // un Scope padre (ej. Global) NO puede depender de cosas registradas solo en un Scope hijo (ej. Loans).
-            return try executeWithCycleTracking(key: key, root: rootBox) {
-                guard let newInstance = try recipe.build(ownerBox) as? T else {
-                    throw GraphError.unregisteredDependency(type: typeName, searchedFromScope: ownerBox.scopeID)
+            // Otro hilo la está construyendo: esperar (o fallar si esperar cerraría un ciclo entre hilos).
+            if let inFlight = ownerBox.pending[key] {
+                lock.unlock()
+                guard inFlight.wait(by: context) else {
+                    let chain = context.names + [String(reflecting: type)]
+                    recordFailure(chain, overwrite: true)
+                    throw GraphError.circularDependency(chain: chain)
                 }
-                ownerBox.instances[key] = newInstance
-                ownerBox.trackForLeaksIfNeeded(newInstance, typeName: typeName)
-                return newInstance
+                continue // ya está en caché, o el constructor falló y lo intentamos nosotros
             }
+
+            let mine = PendingBuild(owner: context)
+            ownerBox.pending[key] = mine
+            lock.unlock()
+            defer {
+                lock.lock()
+                if ownerBox.pending[key] === mine {
+                    ownerBox.pending[key] = nil
+                }
+                lock.unlock()
+                mine.finish()
+            }
+
+            // Se construye usando 'ownerBox' como resolver para garantizar la Regla de Oro:
+            // un Scope padre (ej. Global) NO puede depender de cosas registradas solo en un Scope hijo.
+            let instance = try build(recipe, as: type, key: key, in: ownerBox, context: context)
+            lock.lock()
+            if !ownerBox.isTornDown {
+                ownerBox.instances[key] = instance
+                ownerBox.trackForLeaksIfNeeded(instance, typeName: recipe.typeName)
+            }
+            lock.unlock()
+            return instance
+        }
+    }
+
+    /// Ejecuta la factory del usuario (sin lock) registrando el camino para ciclos y diagnóstico.
+    private func build<T>(
+        _ recipe: GraphRecipe,
+        as type: T.Type,
+        key: ObjectIdentifier,
+        in resolver: ScopeContainer,
+        context: ResolutionContext
+    ) throws -> T {
+        context.push(key, name: recipe.typeName)
+        defer { context.pop() }
+        do {
+            guard let instance = try recipe.build(resolver) as? T else {
+                throw GraphError.unregisteredDependency(type: recipe.typeName, searchedFromScope: resolver.scopeID)
+            }
+            return instance
+        } catch {
+            recordFailure(context.names, overwrite: false)
+            throw error
+        }
+    }
+
+    private func recipeRegisteringJustInTime(for type: Any.Type, key: ObjectIdentifier) -> GraphRecipe? {
+        lock.lock()
+        if let (_, recipe) = findRecipeUpwards(for: key) {
+            lock.unlock()
+            return recipe
+        }
+        lock.unlock()
+        guard let injectable = type as? any Injectable.Type else { return nil }
+        injectable.register(in: self)
+        lock.lock()
+        defer { lock.unlock() }
+        return findRecipeUpwards(for: key)?.1
+    }
+
+    private func recordFailure(_ chain: [String], overwrite: Bool) {
+        lock.lock()
+        defer { lock.unlock() }
+        let root = rootContainer
+        if overwrite || root.lastFailurePath.isEmpty {
+            root.lastFailurePath = chain
+        }
+    }
+
+    // MARK: - Precondiciones por adelantado
+
+    /// Evalúa todas las `@Precondition` alcanzables desde `type` ANTES de construir cualquier nodo,
+    /// sin importar el orden de los parámetros. Los subárboles `@Scoped` ya instanciados se omiten
+    /// (sus precondiciones se cumplieron al crearlos). Los valores quedan en el contexto y se reutilizan.
+    private func evaluatePreconditionsUpFront<T>(for type: T.Type, context: ResolutionContext) throws {
+        let key = ObjectIdentifier(type)
+        lock.lock()
+        validateCaches()
+        let known = subgraphHasPreconditions[key]
+        lock.unlock()
+        if known == false { return }
+
+        var visited = Set<ObjectIdentifier>()
+        var found: [Any.Type] = []
+        var skippedInstantiated = false
+        collectPreconditionTypes(type, visited: &visited, into: &found, skippedInstantiated: &skippedInstantiated)
+
+        if !found.isEmpty || !skippedInstantiated {
+            lock.lock()
+            subgraphHasPreconditions[key] = !found.isEmpty
+            lock.unlock()
+        }
+        for precondition in found {
+            try resolveOpened(precondition, context: context)
+        }
+    }
+
+    private func resolveOpened<P>(_ type: P.Type, context: ResolutionContext) throws {
+        _ = try resolve(type, context: context)
+    }
+
+    private func collectPreconditionTypes(
+        _ currentType: Any.Type,
+        visited: inout Set<ObjectIdentifier>,
+        into found: inout [Any.Type],
+        skippedInstantiated: inout Bool
+    ) {
+        let key = ObjectIdentifier(currentType)
+        guard visited.insert(key).inserted else { return }
+        guard let recipe = recipeRegisteringJustInTime(for: currentType, key: key) else { return }
+
+        switch recipe.lifetime {
+        case .precondition:
+            found.append(currentType)
+            return
+        case .scoped(let scope):
+            lock.lock()
+            let alreadyBuilt = findBoxUpwards(matching: scope)?.instances[key] != nil
+            lock.unlock()
+            if alreadyBuilt {
+                skippedInstantiated = true
+                return
+            }
+        case .transient, .businessRule:
+            break
+        }
+        for dependency in recipe.dependencyTypes {
+            collectPreconditionTypes(dependency, visited: &visited, into: &found, skippedInstantiated: &skippedInstantiated)
         }
     }
 
@@ -531,9 +710,12 @@ public final class ScopeContainer: @unchecked Sendable {
     public func build<T, each D>(
         _ initializer: @escaping (repeat each D) throws -> T
     ) throws -> T {
-        lock.lock()
-        defer { lock.unlock() }
-        return try initializer(repeat try self.resolve((each D).self))
+        if let context = ResolutionContext.active {
+            return try initializer(repeat try self.resolve((each D).self, context: context))
+        }
+        return try ResolutionContext.run { context in
+            try initializer(repeat try self.resolve((each D).self, context: context))
+        }
     }
 
     /// Verifica cuántos objetos están actualmente instanciados en esta caja específica del Scope.
@@ -645,53 +827,66 @@ public final class ScopeContainer: @unchecked Sendable {
     @discardableResult
     public func teardown() -> [String] {
         lock.lock()
-        defer { lock.unlock() }
-
-        guard !isTornDown else { return [] }
+        guard !isTornDown else {
+            lock.unlock()
+            return []
+        }
         isTornDown = true
+
+        let liveChildren = children.compactMap(\.value)
+        children.removeAll()
+        // Soltar las referencias fuertes del diccionario de este Scope (se conservan localmente
+        // para notificar a ScopeDisposable fuera del lock) e invalidar cachés del árbol.
+        var released = Array(instances.values)
+        instances.removeAll()
+        cachedRecipes.removeAll(keepingCapacity: true)
+        cachedScopeBoxes.removeAll(keepingCapacity: true)
+        let tracked = leakTracker
+        leakTracker.removeAll()
+        rootContainer.generation &+= 1
+        lock.unlock()
 
         var leakedTypes: [String] = []
 
         // 1. Destruir primero todos los Scopes hijos hacia abajo en cascada
-        for childRef in children {
-            if let child = childRef.value {
-                leakedTypes.append(contentsOf: child.teardown())
-            }
+        for child in liveChildren {
+            leakedTypes.append(contentsOf: child.teardown())
         }
-        children.removeAll()
 
-        // 2. Notificar a las instancias que implementen ScopeDisposable para cancelar Tasks/Timers
-        for instance in instances.values {
+        // 2. Notificar a las instancias que implementen ScopeDisposable (código de usuario: sin lock)
+        for instance in released {
             if let disposable = instance as? ScopeDisposable {
                 disposable.onScopeTeardown()
             }
         }
+        released.removeAll()
 
-        // 3. Soltar todas las referencias fuertes del diccionario de este Scope y sus cachés
-        instances.removeAll()
-        cachedRecipes.removeAll(keepingCapacity: true)
-        cachedScopeBoxes.removeAll(keepingCapacity: true)
-
-        // 4. Auditar inmediatamente vía WeakObjectBox si algún objeto quedó retenido por un retain cycle
-        for box in leakTracker where box.object != nil {
+        // 3. Auditar vía WeakObjectBox si algún objeto quedó retenido por un retain cycle
+        for box in tracked where box.object != nil {
             leakedTypes.append(box.typeName)
         }
-        leakTracker.removeAll()
-
         return leakedTypes
     }
 
     // MARK: - Helpers Privados
 
     private var rootContainer: ScopeContainer {
-        var current = self
-        while let next = current.parent {
-            current = next
+        rootRef ?? self
+    }
+
+    /// Vacía las cachés de esta caja si algún registro en el árbol las dejó obsoletas.
+    private func validateCaches() {
+        let current = rootContainer.generation
+        if cacheGeneration != current {
+            cachedRecipes.removeAll(keepingCapacity: true)
+            cachedScopeBoxes.removeAll(keepingCapacity: true)
+            subgraphHasPreconditions.removeAll(keepingCapacity: true)
+            cacheGeneration = current
         }
-        return current
     }
 
     private func findBoxUpwards(matching targetScopeID: ScopeID) -> ScopeContainer? {
+        validateCaches()
         if let cached = cachedScopeBoxes[targetScopeID] {
             return cached
         }
@@ -707,6 +902,7 @@ public final class ScopeContainer: @unchecked Sendable {
     }
 
     private func findRecipeUpwards(for key: ObjectIdentifier) -> (ScopeContainer, GraphRecipe)? {
+        validateCaches()
         if let cached = cachedRecipes[key] {
             return cached
         }
@@ -809,36 +1005,10 @@ public final class ScopeContainer: @unchecked Sendable {
             }
         )
         recipes[key] = recipe
-        cachedRecipes.removeAll(keepingCapacity: true)
         if lifetime == .singleton && self !== rootContainer && rootContainer.recipes[key] == nil {
             rootContainer.recipes[key] = recipe
-            rootContainer.cachedRecipes.removeAll(keepingCapacity: true)
         }
-    }
-
-    private func buildStackNames() -> [String] {
-        resolutionStack.map { id in
-            findRecipeUpwards(for: id)?.1.typeName ?? "\(id)"
-        }
-    }
-
-    private func executeWithCycleTracking<R>(
-        key: ObjectIdentifier,
-        root: ScopeContainer,
-        operation: () throws -> R
-    ) rethrows -> R {
-        root.resolutionStack.append(key)
-        defer {
-            root.resolutionStack.removeLast()
-        }
-        do {
-            return try operation()
-        } catch {
-            if root.lastFailurePath.isEmpty {
-                root.lastFailurePath = root.buildStackNames()
-            }
-            throw error
-        }
+        rootContainer.generation &+= 1
     }
 
     private func trackForLeaksIfNeeded(_ instance: Any, typeName: String) {
@@ -847,6 +1017,82 @@ public final class ScopeContainer: @unchecked Sendable {
             let object = instance as AnyObject
             leakTracker.append(WeakObjectBox(typeName: typeName, object: object))
         }
+    }
+}
+
+// MARK: - Contexto de resolución y construcciones en curso
+
+/// Estado de UNA resolución de primer nivel (pila para ciclos, precondiciones ya evaluadas).
+/// Viaja en un `@TaskLocal` para que las llamadas anidadas a `resolve` desde factories lo compartan;
+/// se ignora si se lee desde otro hilo (p. ej. un `Task {}` lanzado dentro de una factory).
+final class ResolutionContext: @unchecked Sendable {
+    @TaskLocal private static var current: ResolutionContext?
+
+    private let thread = ObjectIdentifier(Thread.current)
+    private(set) var stack: [ObjectIdentifier] = []
+    private(set) var names: [String] = []
+    var preconditionValues: [ObjectIdentifier: Any] = [:]
+    /// Construcción ajena que este contexto está esperando (protegido por `PendingBuild.condition`).
+    var waitingFor: PendingBuild?
+
+    static var active: ResolutionContext? {
+        guard let context = current, context.thread == ObjectIdentifier(Thread.current) else { return nil }
+        return context
+    }
+
+    static func run<R>(_ body: (ResolutionContext) throws -> R) throws -> R {
+        let context = ResolutionContext()
+        return try $current.withValue(context) { try body(context) }
+    }
+
+    func push(_ key: ObjectIdentifier, name: String) {
+        stack.append(key)
+        names.append(name)
+    }
+
+    func pop() {
+        stack.removeLast()
+        names.removeLast()
+    }
+}
+
+/// Construcción `@Scoped`/`@Singleton` en curso. Otros hilos esperan en lugar de construir dos veces.
+final class PendingBuild: @unchecked Sendable {
+    private static let condition = NSCondition()
+
+    let owner: ResolutionContext
+    private var done = false
+
+    init(owner: ResolutionContext) {
+        self.owner = owner
+    }
+
+    func finish() {
+        Self.condition.lock()
+        done = true
+        Self.condition.broadcast()
+        Self.condition.unlock()
+    }
+
+    /// Espera a que la construcción termine. Devuelve `false` (sin esperar) si el dueño, directa o
+    /// transitivamente, está esperando a `waiter`: eso sería un ciclo entre hilos (deadlock).
+    func wait(by waiter: ResolutionContext) -> Bool {
+        Self.condition.lock()
+        defer { Self.condition.unlock() }
+        if done { return true }
+        var current: ResolutionContext? = owner
+        var hops = 0
+        while let context = current, hops < 1_000 {
+            if context === waiter { return false }
+            current = context.waitingFor?.owner
+            hops += 1
+        }
+        waiter.waitingFor = self
+        while !done {
+            Self.condition.wait()
+        }
+        waiter.waitingFor = nil
+        return true
     }
 }
 
