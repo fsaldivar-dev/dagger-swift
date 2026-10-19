@@ -9,19 +9,20 @@ Responsable: **F** = Francisco · **C** = Claude (en la Mac de Francisco).
 - [x] Spike `dagger-graph`: medición (sin cambios ~3 ms, 1 archivo ~5 ms) — C
 - [x] Split `DaggerSwiftCore` (runtime binario) + `DaggerSwift` (macros, fuente) — C
 - [x] `ci.yml` (fuente) y `release.yml` (XCFramework + artifactbundle) + ensayo en seco local — C
-- [ ] Cambiar el release a `workflow_dispatch` (crea el tag sobre el commit binario, sin moverlo) — C
+- [x] Cambiar el release a `workflow_dispatch` (crea el tag sobre el commit binario, sin moverlo) — C
 - [ ] Push de las ramas y PR — C (requiere OK de F)
-- [ ] Settings › Actions › Workflow permissions: *Read and write*; sin protección de force-push en tags `v*` (si se mantiene mover tag) — F
+- [ ] Settings › Actions › Workflow permissions: *Read and write* (el release ya no mueve tags) — F
 - [ ] Primera corrida de CI en GitHub: confirmar Swift 6 + platforms tvOS/watchOS/visionOS en `macos-15` — C/F
 - [ ] Definir versión (propuesta: `v2.1.0`; ojo: nombres de tipos del runtime en snapshots pasan a `DaggerSwiftCore.X`) — F
-- [ ] Primer release real — F dispara, C revisa
+- [ ] Pre-release `v2.1.0-rc.1` (valida el flujo binario de punta a punta) — F dispara, C revisa
+- [ ] Release `v2.1.0` — F
 
 ## 2. Deuda a cerrar pronto
 
 - [x] Linux: guardar `objc_setAssociatedObject` con `#if canImport(ObjectiveC)` o quitar Linux de las notas — C
 - [x] Agregar `.visionOS` a `platforms` (las notas lo prometen) — C
-- [ ] Smoke test del consumidor en iOS Simulator dentro de `release.yml` — C
-- [ ] Revisar el "known issue" de los tests de Benchmarks (¿intencional?) — F/C
+- [x] Smoke test del consumidor en iOS Simulator dentro de `release.yml` — C
+- [x] Revisar el "known issue" de los tests de Benchmarks (¿intencional?) — F/C
 
 ## 3. dagger-graph — Fase 2
 
@@ -75,4 +76,5 @@ ni los casos de uso. Y solo deben llegar a runtime los errores que dependen del 
 
 ## 9. Plataformas
 
-- [ ] Linux real: compilar y correr tests en `swift:6.x` (Docker no estaba corriendo en la Mac) — C/F
+- [x] Job de Linux en CI (`swift:6.1`, no bloqueante hasta su primera corrida en verde) — C
+- [ ] Confirmar Linux en la primera corrida del CI y volverlo bloqueante — C
