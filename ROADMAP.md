@@ -33,19 +33,19 @@ Responsable: **F** = Francisco · **C** = Claude (en la Mac de Francisco).
 ## 4. Opcional
 
 - [ ] Firmar el XCFramework (`codesign`) — F (requiere certificado)
-- [ ] README: flujo dev (fuente) vs. release (binario) y uso de `swift package dagger-graph` — C
+- [x] README: flujo dev (fuente) vs. release (binario) y uso de `swift package dagger-graph` — C
 
 ## 5. Pendientes del código generado (`dagger-graph generate`)
 
-- [ ] Thread-safety: hoy las clases generadas guardan singletons/scoped como un `lazy var` (sin lock). Opciones: lock por grafo o `@MainActor` siempre — C
-- [ ] Scopes anidados: hoy solo raíz → un nivel de scope (p. ej. Global → FintechScope). Falta Global → Sesión → Feature — C
-- [ ] `@Precondition` transitivas: hoy se evalúan primero solo las directas; el runtime revisa todo el subgrafo — C
-- [ ] Imports automáticos de módulos que solo declaran protocolos (hoy `--import` a mano) — C
+- [x] Thread-safety: hoy las clases generadas guardan singletons/scoped como un `lazy var` (sin lock). Opciones: lock por grafo o `@MainActor` siempre — C
+- [x] Scopes anidados: hoy solo raíz → un nivel de scope (p. ej. Global → FintechScope). Falta Global → Sesión → Feature — C
+- [x] `@Precondition` transitivas: hoy se evalúan primero solo las directas; el runtime revisa todo el subgrafo — C
+- [x] Imports automáticos de módulos que solo declaran protocolos (hoy `--import` a mano) — C
 
 ## 6. Notas de versión (próximo release)
 
-- [ ] **Cambio que puede romper compilación:** nuevo caso `GraphError.mainActorRequired`. Quien haga `switch` sobre `GraphError` sin `default` debe agregar ese caso (o un `default`) — F/C
-- [ ] Paquete partido en `DaggerSwiftCore` + `DaggerSwift` (la API pública no cambia; nombres en snapshots pasan a `DaggerSwiftCore.X`) — F/C
+- [x] **Cambio que puede romper compilación:** nuevo caso `GraphError.mainActorRequired`. Quien haga `switch` sobre `GraphError` sin `default` debe agregar ese caso (o un `default`) — F/C
+- [x] Paquete partido en `DaggerSwiftCore` + `DaggerSwift` (la API pública no cambia; nombres en snapshots pasan a `DaggerSwiftCore.X`) — F/C
 
 ## 7. Diseño de errores: qué se atrapa en runtime y qué debe fallar al compilar
 
@@ -60,7 +60,19 @@ ni los casos de uso. Y solo deben llegar a runtime los errores que dependen del 
 | `scopeNotActive` | Se pide algo `@Scoped(X)` sin abrir el scope X (`makeChildScope`) o después de cerrarlo (`teardown`) | Lo primero: compilación (por raíz). Lo segundo (usar un scope ya cerrado): runtime |
 | `unmetPrecondition` | La `@Precondition` devuelve `nil` (p. ej. no hay sesión) | **Runtime**: depende del estado; es el caso real del Coordinator |
 
-- [ ] dagger-graph: detectar `scopeNotActive` estático (pedir un `@Scoped(X)` desde una raíz que nunca abre X) — C
-- [ ] Red de seguridad (recomendado): el runtime SIEMPRE sigue detectando todos los errores (el CLI puede no correr: plugin no aplicado, listas no literales, `bindInstance`, falsos negativos). Errores de programación → `assertionFailure` en DEBUG (truena fuerte al desarrollar) y en release se lanzan igual para que el `catch` único del Coordinator los registre (crash reporter) y muestre un fallback en vez de crashear. Agregar `GraphError.isProgrammerError` (no rompe compatibilidad) para distinguirlos — C
+- [x] dagger-graph: detectar `scopeNotActive` estático (pedir un `@Scoped(X)` desde una raíz que nunca abre X) — C
+- [x] Red de seguridad (recomendado): el runtime SIEMPRE sigue detectando todos los errores (el CLI puede no correr: plugin no aplicado, listas no literales, `bindInstance`, falsos negativos). Errores de programación → `assertionFailure` en DEBUG (truena fuerte al desarrollar) y en release se lanzan igual para que el `catch` único del Coordinator los registre (crash reporter) y muestre un fallback en vez de crashear. Agregar `GraphError.isProgrammerError` (no rompe compatibilidad) para distinguirlos — C
 - [ ] (Opcional, rompe API) `throws(GraphRuntimeError)` tipado solo con errores de estado — decisión de F
-- [ ] Documentar el patrón Coordinator: un solo `do/catch` en el coordinador que traduce `unmetPrecondition` a navegación (login, deep link pendiente) — C
+- [x] Documentar el patrón Coordinator: un solo `do/catch` en el coordinador que traduce `unmetPrecondition` a navegación (login, deep link pendiente) — C
+
+## 8. Macros (pendiente de decisión de F)
+
+- [x] Medido: swift-syntax en el target de macros = 2–2.5 s con prebuilts del compilador exacto (603.0.2 / Swift 6.3.3), pero 15 s debug / 171 s release sin prebuilts (otro Xcode). Hoy: 0.7–1.5 s, cero dependencias.
+- [ ] Decidir: migrar a SwiftSyntax vs. arreglar el parser actual (recomendado) — F
+- [ ] Bugs de la macro actual: `let a, b: Int` no compila; `init` con defaults resuelve el parámetro del grafo en vez de usar el default; función `async` en @Module da un error confuso — C
+- [ ] Diagnósticos claros desde la macro (campo `diagnostics` del protocolo del plugin) — C
+- [ ] Tests de expansión sin swift-syntax (mensajes del protocolo del plugin) — C
+
+## 9. Plataformas
+
+- [ ] Linux real: compilar y correr tests en `swift:6.x` (Docker no estaba corriendo en la Mac) — C/F
