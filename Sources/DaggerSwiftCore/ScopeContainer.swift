@@ -1109,7 +1109,9 @@ public extension ScopeContainer {
     /// Usado por la expansión de `@Inject` en tipos `@MainActor`: construye en el hilo principal
     /// o lanza `GraphError.mainActorRequired` (antes: crash de `MainActor.assumeIsolated`).
     static func onMainActor<T: Sendable>(_ body: @MainActor () throws -> T) throws -> T {
-        guard Thread.isMainThread else {
+        // En Linux el MainActor no garantiza correr en el hilo principal del proceso: `resolveOnMainActor`
+        // marca explícitamente que ya estamos aislados al MainActor.
+        guard Thread.isMainThread || MainActorResolution.isActive else {
             throw reportProgrammerError(.mainActorRequired(type: String(reflecting: T.self)))
         }
         return try MainActor.assumeIsolated(body)
@@ -1117,7 +1119,9 @@ public extension ScopeContainer {
 
     /// Resuelve `T` saltando al `MainActor` (para ViewModels `@MainActor @Inject` pedidos desde background).
     func resolveOnMainActor<T: Sendable>(_ type: T.Type = T.self) async throws -> T {
-        try await MainActor.run { try self.resolve(type) }
+        try await MainActor.run {
+            try MainActorResolution.$isActive.withValue(true) { try self.resolve(type) }
+        }
     }
 }
 
@@ -1178,4 +1182,9 @@ final class ProgrammerErrorPolicyStore: @unchecked Sendable {
             || env["XCTestBundlePath"] != nil
             || env["XCTestSessionIdentifier"] != nil
     }()
+}
+
+/// Marca de "esta resolución ya corre aislada al MainActor" (la pone `resolveOnMainActor`).
+enum MainActorResolution {
+    @TaskLocal static var isActive = false
 }
