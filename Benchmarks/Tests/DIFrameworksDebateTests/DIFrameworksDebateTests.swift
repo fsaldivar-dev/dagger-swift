@@ -240,10 +240,14 @@ struct DIFrameworksDebateTests {
         // ❌ En Point-Free `swift-dependencies`, si un desarrollador instancia `TcaUnconfiguredUseCase()`
         // y olvida envolverlo en `withDependencies { $0.unconfiguredRepo = ... }`, el código COMPILA
         // pero explota en Runtime con un Issue de dependencia no implementada:
+        // swift-dependencies solo reporta el Issue en builds DEBUG: en release no habría Issue que esperar
+        // (y el benchmark se corre en release), así que la demostración del fallo es solo para debug.
+        #if DEBUG
         withKnownIssue("Point-Free swift-dependencies falla en Runtime cuando se olvida withDependencies") {
             let useCase = TcaUnconfiguredUseCase()
             _ = useCase.execute()
         }
+        #endif
 
         // ✅ En DaggerSwift Explícito, no existen `@TaskLocal` ocultos ni contenedores invisibles en `Domain`:
         // `BenchUseCase` recibe su dependencia explícitamente por constructor o desde `BenchModuleV1`.
