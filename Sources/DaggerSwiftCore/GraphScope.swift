@@ -81,8 +81,12 @@ public enum GraphError: Error, Equatable, CustomStringConvertible, Sendable {
     case unmetPrecondition(type: String, reason: String)
     /// Se intentó resolver un tipo para el cual no existe receta ni en el Scope actual ni en sus padres.
     case unregisteredDependency(type: String, searchedFromScope: ScopeID)
-    /// Se intentó guardar o resolver una dependencia cuyo Scope dueño no está activo en la jerarquía hacia arriba.
+    /// Se intentó resolver una dependencia cuyo Scope dueño NUNCA se abrió en la jerarquía hacia arriba
+    /// (falta `makeChildScope(for:)`). Error de programación: dagger-graph lo detecta al compilar.
     case scopeNotActive(requestedScope: ScopeID, currentScope: ScopeID, dependencyType: String)
+    /// El Scope dueño existió pero ya se cerró (`teardown()`): alguien retuvo una referencia a un flujo
+    /// terminado. Error de estado: lo maneja el Coordinator (p. ej. volver a abrir el flujo).
+    case scopeClosed(scope: ScopeID, dependencyType: String)
     /// Se detectó un ciclo infinito en el grafo (`A -> B -> A`).
     case circularDependency(chain: [String])
     /// Un tipo `@MainActor` se intentó construir fuera del hilo principal.
@@ -99,8 +103,39 @@ public enum GraphError: Error, Equatable, CustomStringConvertible, Sendable {
             return "El scope [\(requested)] requerido por [\(dep)] no está activo en la cadena de padres de [\(current)]"
         case let .circularDependency(chain):
             return "Ciclo de dependencias detectado: " + chain.joined(separator: " -> ")
+        case let .scopeClosed(scope, dep):
+            return "El scope [\(scope)] de [\(dep)] ya se cerró (teardown); vuelve a abrir el flujo"
         case let .mainActorRequired(type):
             return "[\(type)] es @MainActor y se intentó construir fuera del hilo principal; usa resolveOnMainActor(_:)"
         }
     }
+}
+
+// MARK: - Errores de programación vs. errores de estado
+
+public extension GraphError {
+    /// `true` si el error es un bug del código que debió detectarse al compilar (dagger-graph):
+    /// ciclo, dependencia no registrada, scope nunca abierto, tipo `@MainActor` pedido fuera del hilo principal.
+    /// `false` si depende del estado de la app (`unmetPrecondition`, `scopeClosed`): el Coordinator lo
+    /// convierte en navegación (login, reabrir el flujo, guardar el deep link).
+    var isProgrammerError: Bool {
+        switch self {
+        case .unmetPrecondition, .scopeClosed:
+            return false
+        case .unregisteredDependency, .scopeNotActive, .circularDependency, .mainActorRequired:
+            return true
+        }
+    }
+}
+
+/// Qué hacer cuando el runtime encuentra un error de programación (la red de seguridad si el CLI no corrió).
+public enum ProgrammerErrorPolicy: Sendable, Equatable {
+    /// `assertionFailure` en builds DEBUG de DaggerSwift (truena al desarrollar) y en release solo lanza.
+    /// Ojo: con el XCFramework de release (compilado sin DEBUG) equivale a `.throwOnly`; usa `.trap` si
+    /// quieres que truene también ahí durante el desarrollo.
+    case assertInDebug
+    /// `fatalError` siempre: útil en el target de desarrollo de la app.
+    case trap
+    /// Solo lanza el error (por defecto dentro de tests, que provocan estos errores a propósito).
+    case throwOnly
 }

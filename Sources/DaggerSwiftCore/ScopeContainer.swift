@@ -507,14 +507,14 @@ public final class ScopeContainer: @unchecked Sendable {
         if context.stack.contains(key) {
             let chain = context.names + [String(reflecting: type)]
             recordFailure(chain, overwrite: true)
-            throw GraphError.circularDependency(chain: chain)
+            throw Self.reportProgrammerError(.circularDependency(chain: chain))
         }
 
         // 2. Receta en este contenedor o algún ancestro; si no existe pero el tipo es @Inject, Just-In-Time.
         guard let recipe = recipeRegisteringJustInTime(for: type, key: key) else {
             let typeName = String(reflecting: type)
             recordFailure(context.names + [typeName], overwrite: true)
-            throw GraphError.unregisteredDependency(type: typeName, searchedFromScope: self.scopeID)
+            throw Self.reportProgrammerError(.unregisteredDependency(type: typeName, searchedFromScope: self.scopeID))
         }
 
         // 3. Ejecutar según el ciclo de vida del nodo
@@ -546,15 +546,22 @@ public final class ScopeContainer: @unchecked Sendable {
         while true {
             lock.lock()
             // Subir desde el contenedor actual para encontrar la caja dueña del Scope.
-            guard let ownerBox = findBoxUpwards(matching: targetScopeID), !ownerBox.isTornDown else {
+            guard let ownerBox = findBoxUpwards(matching: targetScopeID) else {
                 lock.unlock()
                 let typeName = String(reflecting: type)
                 recordFailure(context.names + [typeName], overwrite: true)
-                throw GraphError.scopeNotActive(
+                throw Self.reportProgrammerError(.scopeNotActive(
                     requestedScope: targetScopeID,
                     currentScope: self.scopeID,
                     dependencyType: typeName
-                )
+                ))
+            }
+            // El scope existió pero ya se cerró: error de estado (no de programación).
+            guard !ownerBox.isTornDown else {
+                lock.unlock()
+                let typeName = String(reflecting: type)
+                recordFailure(context.names + [typeName], overwrite: true)
+                throw GraphError.scopeClosed(scope: targetScopeID, dependencyType: typeName)
             }
 
             // Si ya existe en la caja dueña, devolverla en O(1)
@@ -569,7 +576,7 @@ public final class ScopeContainer: @unchecked Sendable {
                 guard inFlight.wait(by: context) else {
                     let chain = context.names + [String(reflecting: type)]
                     recordFailure(chain, overwrite: true)
-                    throw GraphError.circularDependency(chain: chain)
+                    throw Self.reportProgrammerError(.circularDependency(chain: chain))
                 }
                 continue // ya está en caché, o el constructor falló y lo intentamos nosotros
             }
@@ -1103,7 +1110,7 @@ public extension ScopeContainer {
     /// o lanza `GraphError.mainActorRequired` (antes: crash de `MainActor.assumeIsolated`).
     static func onMainActor<T: Sendable>(_ body: @MainActor () throws -> T) throws -> T {
         guard Thread.isMainThread else {
-            throw GraphError.mainActorRequired(type: String(reflecting: T.self))
+            throw reportProgrammerError(.mainActorRequired(type: String(reflecting: T.self)))
         }
         return try MainActor.assumeIsolated(body)
     }
@@ -1112,4 +1119,58 @@ public extension ScopeContainer {
     func resolveOnMainActor<T: Sendable>(_ type: T.Type = T.self) async throws -> T {
         try await MainActor.run { try self.resolve(type) }
     }
+}
+
+// MARK: - Red de seguridad para errores de programación
+
+public extension ScopeContainer {
+    /// Política ante errores de programación detectados en runtime (ver `ProgrammerErrorPolicy`).
+    /// Por defecto: `.assertInDebug`, salvo dentro de un runner de tests (`.throwOnly`).
+    static var programmerErrorPolicy: ProgrammerErrorPolicy {
+        get { ProgrammerErrorPolicyStore.shared.value }
+        set { ProgrammerErrorPolicyStore.shared.value = newValue }
+    }
+
+    /// Aplica la política y devuelve el error para lanzarlo.
+    static func reportProgrammerError(_ error: GraphError) -> GraphError {
+        guard error.isProgrammerError else { return error }
+        switch programmerErrorPolicy {
+        case .throwOnly:
+            break
+        case .assertInDebug:
+            assertionFailure("DaggerSwift: \(error.description). Debió detectarse al compilar (dagger-graph).")
+        case .trap:
+            fatalError("DaggerSwift: \(error.description). Debió detectarse al compilar (dagger-graph).")
+        }
+        return error
+    }
+}
+
+final class ProgrammerErrorPolicyStore: @unchecked Sendable {
+    static let shared = ProgrammerErrorPolicyStore()
+    private let lock = NSLock()
+    private var stored: ProgrammerErrorPolicy?
+
+    var value: ProgrammerErrorPolicy {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return stored ?? (Self.isRunningTests ? .throwOnly : .assertInDebug)
+        }
+        set {
+            lock.lock()
+            stored = newValue
+            lock.unlock()
+        }
+    }
+
+    /// Heurística: `swift test` (swiftpm-testing-helper / xctest) o Xcode (XCTestConfigurationFilePath).
+    static let isRunningTests: Bool = {
+        let info = ProcessInfo.processInfo
+        let env = info.environment
+        return ["swiftpm-testing-helper", "xctest"].contains(info.processName)
+            || env["XCTestConfigurationFilePath"] != nil
+            || env["XCTestBundlePath"] != nil
+            || env["XCTestSessionIdentifier"] != nil
+    }()
 }

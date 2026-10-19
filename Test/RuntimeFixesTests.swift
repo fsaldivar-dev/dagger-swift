@@ -222,3 +222,39 @@ extension RuntimeFixesTests {
         #expect(FixAuthState.validatorCalls == 1)
     }
 }
+
+// MARK: - Errores de programación vs. estado
+
+enum ClosedFixScope: GraphScope {}
+final class ClosedFixService: @unchecked Sendable { init() {} }
+
+extension RuntimeFixesTests {
+
+    @Test("Errores: isProgrammerError separa bugs (compilación) de estado (Coordinator)")
+    func programmerErrorClassification() {
+        let scope = GlobalScope.scopeID
+        #expect(GraphError.circularDependency(chain: []).isProgrammerError)
+        #expect(GraphError.unregisteredDependency(type: "X", searchedFromScope: scope).isProgrammerError)
+        #expect(GraphError.scopeNotActive(requestedScope: scope, currentScope: scope, dependencyType: "X").isProgrammerError)
+        #expect(GraphError.mainActorRequired(type: "X").isProgrammerError)
+        #expect(!GraphError.unmetPrecondition(type: "X", reason: "").isProgrammerError)
+        #expect(!GraphError.scopeClosed(scope: scope, dependencyType: "X").isProgrammerError)
+    }
+
+    @Test("Errores: pedir algo de un scope ya cerrado es scopeClosed (estado), no scopeNotActive")
+    func closedScopeIsStateError() throws {
+        let root = ScopeContainer.root()
+        let child = root.makeChildScope(for: ClosedFixScope.self)
+        child.provideScoped(in: ClosedFixScope.self, ClosedFixService.self) { ClosedFixService() }
+        _ = try child.resolve(ClosedFixService.self)
+        child.teardown()
+        #expect(throws: GraphError.scopeClosed(scope: ClosedFixScope.scopeID, dependencyType: String(reflecting: ClosedFixService.self))) {
+            _ = try child.resolve(ClosedFixService.self)
+        }
+    }
+
+    @Test("Errores: dentro de tests la política por defecto es throwOnly (los tests provocan errores a propósito)")
+    func defaultPolicyInsideTests() {
+        #expect(ScopeContainer.programmerErrorPolicy == .throwOnly)
+    }
+}
