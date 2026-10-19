@@ -1,10 +1,7 @@
 // Generado por `dagger-graph generate`. No editar: se reescribe solo si cambia.
 // swiftlint:disable all
 
-import AppFoundation
-import Core
 import DaggerSwift
-import Features
 import FintechMockupDemo
 import Foundation
 import MultiCountryNewsDemo

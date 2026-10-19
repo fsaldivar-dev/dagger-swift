@@ -24,10 +24,27 @@ struct CacheEntry: Codable, Sendable {
     var hash: UInt64
     var relevant: Bool
     var facts: FileFacts?
+    /// Tipos declarados en el archivo (regex barata, también en archivos sin @Inject/@Module):
+    /// le dicen a `generate` qué módulo importar para cada tipo.
+    var declared: [String] = []
+}
+
+enum DeclaredTypes {
+    static let regex = try! NSRegularExpression(
+        pattern: #"\b(?:protocol|class|struct|enum|actor|typealias)\s+([A-Z][A-Za-z0-9_]*)"#
+    )
+
+    static func scan(_ data: Data) -> [String] {
+        guard let text = String(data: data, encoding: .utf8) else { return [] }
+        let range = NSRange(text.startIndex..., in: text)
+        return regex.matches(in: text, range: range).compactMap {
+            Range($0.range(at: 1), in: text).map { String(text[$0]) }
+        }
+    }
 }
 
 struct CacheFile: Codable {
-    static let currentVersion = 4
+    static let currentVersion = 5
     var version = CacheFile.currentVersion
     var roots: [String] = []
     var entries: [String: CacheEntry] = [:]
@@ -171,7 +188,11 @@ struct DaggerGraphCommand {
                         return (f, e, nil)
                     }
                     let relevant = markers.contains { data.range(of: $0) != nil }
-                    return (f, CacheEntry(mtime: f.mtime, size: f.size, hash: hash, relevant: relevant, facts: nil), relevant ? data : nil)
+                    let entry = CacheEntry(
+                        mtime: f.mtime, size: f.size, hash: hash, relevant: relevant, facts: nil,
+                        declared: generateMode ? DeclaredTypes.scan(data) : []
+                    )
+                    return (f, entry, relevant ? data : nil)
                 }
             }
             var out: [(ScannedFile, CacheEntry, Data?)] = []
@@ -235,6 +256,12 @@ struct DaggerGraphCommand {
         }
         var validator = Validator(facts: allFacts)
         validator.extraImports = Set(extraImports)
+        // Índice tipo → archivo que lo declara (para imports automáticos del código generado).
+        if generateMode {
+            for (path, e) in entries.sorted(by: { $0.key < $1.key }) {
+                for t in e.declared where validator.declaredIn[t] == nil { validator.declaredIn[t] = path }
+            }
+        }
         // Los diagnósticos de archivos de manifiestos son del otro paquete: aquí solo los locales.
         let diags = validator.run().filter { !$0.file.contains("::") }
         clock.mark("validate")

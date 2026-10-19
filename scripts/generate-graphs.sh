@@ -14,8 +14,6 @@ G="$(swift build -c release --package-path Tools/DaggerGraph --show-bin-path)/da
 "$G" generate --no-cache --out Sources/SampleProyect/Tests/AppGraphTests/Generated \
   --smoke-tests Sources/SampleProyect/Tests/AppGraphTests/Generated/DaggerGraphSmokeTests.swift \
   --roots-in Sources/SampleProyect/Tests/AppGraphTests --target-module AppGraphTests \
-  --import AppFoundation --import Core --import Services --import Features \
-  --import MultiCountryNewsDemo --import FintechMockupDemo \
   Sources/SampleProyect
 
 # Fixture de scopes anidados: tiene tests propios (estado global compartido), sin tests de humo.

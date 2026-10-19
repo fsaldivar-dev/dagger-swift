@@ -433,10 +433,24 @@ extension Validator {
     private func importsHeader(for used: [Int], targetModule: String?, foundation: Bool) -> String {
         var mods = Set(["DaggerSwift"]).union(extraImports)
         if foundation { mods.insert("Foundation") }
+        var typeNames = Set<String>()
         for idx in used {
             if let m = Self.moduleName(forFile: nodes[idx].file), m != targetModule { mods.insert(m) }
+            let b = nodes[idx].binding
+            for spelled in [b.provides, b.spelledType] + b.deps.map(\.spelled) {
+                typeNames.formUnion(Self.typeIdentifiers(in: spelled))
+            }
+        }
+        // Módulos que declaran los tipos usados (p. ej. protocolos en `Core` sin bindings).
+        for t in typeNames {
+            if let file = declaredIn[t], let m = Self.moduleName(forFile: file), m != targetModule { mods.insert(m) }
         }
         return mods.sorted().map { "import \($0)" }.joined(separator: "\n") + "\n"
+    }
+
+    static func typeIdentifiers(in spelled: String) -> [String] {
+        spelled.split(whereSeparator: { !($0.isLetter || $0.isNumber || $0 == "_") })
+            .map(String.init).filter { $0.first?.isUppercase == true }
     }
 
     /// Heurística SwiftPM: el directorio inmediatamente bajo el último `Sources/` o `Tests/`.

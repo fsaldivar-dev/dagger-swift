@@ -39,6 +39,8 @@ struct Validator {
     let roots: [(file: String, root: RootFact, parent: Int?)]
     /// Módulos extra a importar en el código generado (`generate --import M`).
     var extraImports: Set<String> = []
+    /// Tipo → archivo que lo declara (solo en `generate`).
+    var declaredIn: [String: String] = [:]
     let modules: [String: (file: String, fact: ModuleFact)]
     private var providers: [String: [Int]] = [:]
     private var providersByLastComponent: [String: [Int]] = [:]
