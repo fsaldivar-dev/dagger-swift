@@ -15,9 +15,16 @@ extension DaggerGraph_BenchModuleV2 {
         func benchProtectedInteractor() throws -> BenchProtectedInteractor {
             lock.lock(); defer { lock.unlock() }
             if let cached = _benchProtectedInteractor { return cached }
+            try _pre_benchProtectedInteractor()
             let value = try BenchProtectedInteractor(session: parent.benchSessionPrecondition(), useCase: benchUseCase())
             _benchProtectedInteractor = value
             return value
+        }
+
+        func _pre_benchProtectedInteractor() throws {
+            lock.lock(); let built = _benchProtectedInteractor != nil; lock.unlock()
+            if built { return }
+            _ = try parent.benchSessionPrecondition()
         }
 
         private var _benchRepositoryProtocol: (any BenchRepositoryProtocol)?

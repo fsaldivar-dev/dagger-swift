@@ -15,9 +15,16 @@ extension DaggerGraph_NestedAppModule {
         func nestedFeatureViewModel() throws -> NestedFeatureViewModel {
             lock.lock(); defer { lock.unlock() }
             if let cached = _nestedFeatureViewModel { return cached }
+            try _pre_nestedFeatureViewModel()
             let value = try NestedFeatureViewModel(report: parent.nestedHeavyReport(), gate: parent.parent.nestedSessionGate())
             _nestedFeatureViewModel = value
             return value
+        }
+
+        func _pre_nestedFeatureViewModel() throws {
+            lock.lock(); let built = _nestedFeatureViewModel != nil; lock.unlock()
+            if built { return }
+            _ = try parent.parent.nestedSession()
         }
     }
 }

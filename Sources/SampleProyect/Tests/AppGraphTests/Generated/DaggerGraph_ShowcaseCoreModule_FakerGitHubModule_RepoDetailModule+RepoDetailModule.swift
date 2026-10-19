@@ -19,9 +19,15 @@ extension DaggerGraph_ShowcaseCoreModule_FakerGitHubModule_RepoDetailModule {
         private var _repoDetailInspector: RepoDetailInspector?
         func repoDetailInspector() throws -> RepoDetailInspector {
             if let cached = _repoDetailInspector { return cached }
+            try _pre_repoDetailInspector()
             let value = try RepoDetailModule.repoDetailInspector(session: parent.validatedSession())
             _repoDetailInspector = value
             return value
+        }
+
+        func _pre_repoDetailInspector() throws {
+            if _repoDetailInspector != nil { return }
+            _ = try parent.validatedSession()
         }
     }
 }

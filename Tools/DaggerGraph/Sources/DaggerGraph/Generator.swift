@@ -229,33 +229,22 @@ extension Validator {
         let sendable = mainActor ? "" : ": @unchecked Sendable"
 
         func accessor(_ idx: Int) -> String { Self.accessorName(nodes[idx].binding.provides) }
-        /// Expresión que construye el nodo y, si tiene `@Precondition` directas, un preludio que
-        /// las evalúa PRIMERO (mismo orden que el runtime: 0 allocations si una falla).
+        func path(from home: Home, to target: Int) -> String {
+            // Subir tantos `parent.` como niveles separen al nodo de su dependencia.
+            String(repeating: "parent.", count: max(0, depth(home) - depth(self.homeOf(target, homes) ?? .root)))
+        }
+
+        /// Expresión que construye el nodo con llamadas directas a sus dependencias.
         func call(_ idx: Int, from home: Home) -> (prelude: [String], expr: String) {
             let b = nodes[idx].binding
-            func target(_ d: Dependency) -> String {
+            let args = b.deps.map { d -> String in
                 let p = provider(d.type)!
-                // Subir tantos `parent.` como niveles separen al nodo de su dependencia.
-                let hops = max(0, depth(home) - depth(self.homeOf(p, homes) ?? .root))
-                return String(repeating: "parent.", count: hops) + "\(accessor(p))()"
-            }
-            let isPrecondition = b.deps.map { nodes[provider($0.type)!].binding.kind == .precondition }
-            let hoist = isPrecondition.contains(true) && isPrecondition.first == false
-            var prelude: [String] = []
-            var argValues = b.deps.map(target).map { "try " + $0 }
-            if hoist {
-                let order = b.deps.indices.sorted { (isPrecondition[$0] ? 0 : 1, $0) < (isPrecondition[$1] ? 0 : 1, $1) }
-                for i in order {
-                    prelude.append("let arg\(i) = \(argValues[i])")
-                    argValues[i] = "arg\(i)"
-                }
-            }
-            let args = zip(b.deps, argValues).map { d, v in
-                let value = hoist ? v : String(v.dropFirst(4))
+                let value = path(from: home, to: p) + "\(accessor(p))()"
                 return d.label == "_" ? value : "\(d.label): \(value)"
             }.joined(separator: ", ")
-            let needsTry = b.isThrowing || (!b.deps.isEmpty && !hoist)
+            let needsTry = b.isThrowing || !b.deps.isEmpty
             let prefix = needsTry ? "try " : ""
+            let prelude = hasPreconditions(idx) ? ["try _pre_\(accessor(idx))()"] : []
             switch b.kind {
             case .inject:
                 return (prelude, "\(prefix)\(b.provides)(\(args))")
@@ -264,7 +253,58 @@ extension Validator {
             }
         }
 
+        /// `@Precondition` alcanzables por nodos transient y frontera de nodos cacheados (singleton/scoped).
+        func isCached(_ idx: Int) -> Bool { nodes[idx].binding.lifetime != .transient }
+        var preMemo: [Int: Bool] = [:]
+        func frontier(_ idx: Int) -> (pre: [Int], cached: [Int]) {
+            var pre: [Int] = [], cached: [Int] = [], seen = Set<Int>()
+            func walk(_ i: Int) {
+                for d in nodes[i].binding.deps {
+                    guard let p = provider(d.type), seen.insert(p).inserted else { continue }
+                    if nodes[p].binding.kind == .precondition { pre.append(p) }
+                    else if isCached(p) { cached.append(p) }
+                    else { walk(p) }
+                }
+            }
+            walk(idx)
+            return (pre, cached)
+        }
+        func hasPreconditions(_ idx: Int, stack: Set<Int> = []) -> Bool {
+            if let m = preMemo[idx] { return m }
+            guard nodes[idx].binding.kind != .precondition, !stack.contains(idx) else { return false }
+            let f = frontier(idx)
+            let result = !f.pre.isEmpty || f.cached.contains { hasPreconditions($0, stack: stack.union([idx])) }
+            preMemo[idx] = result
+            return result
+        }
+        /// `_pre_x()`: evalúa las precondiciones del subgrafo de x ANTES de construir nada (0 allocations si
+        /// alguna falla). Los nodos cacheados ya construidos se omiten (como el runtime).
+        func preFunction(_ idx: Int, home: Home) -> String? {
+            guard hasPreconditions(idx) else { return nil }
+            let name = accessor(idx)
+            let f = frontier(idx)
+            var lines = ["    func _pre_\(name)() throws {"]
+            if isCached(idx) {
+                if mainActor {
+                    lines.append("        if _\(name) != nil { return }")
+                } else {
+                    lines.append("        lock.lock(); let built = _\(name) != nil; lock.unlock()")
+                    lines.append("        if built { return }")
+                }
+            }
+            for p in f.pre { lines.append("        _ = try \(path(from: home, to: p))\(accessor(p))()") }
+            for c in f.cached where hasPreconditions(c) { lines.append("        try \(path(from: home, to: c))_pre_\(accessor(c))()") }
+            lines.append("    }")
+            return lines.joined(separator: "\n")
+        }
+
         func body(_ idx: Int, home: Home) -> String {
+            let accessorCode = accessorBody(idx, home: home)
+            guard let pre = preFunction(idx, home: home) else { return accessorCode }
+            return accessorCode + "\n\n" + pre
+        }
+
+        func accessorBody(_ idx: Int, home: Home) -> String {
             let b = nodes[idx].binding
             let name = accessor(idx)
             let type = Self.returnType(b)

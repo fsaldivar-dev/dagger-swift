@@ -104,6 +104,19 @@ struct NestedGeneratedGraphTests {
         #expect(sharedApi)
     }
 
+    @Test("@Precondition indirecta se evalúa antes de construir la dependencia pesada (0 allocations)")
+    func indirectPreconditionFirst() throws {
+        NestedAuthState.user = nil
+        NestedHeavyReport.initCount = 0
+        let feature = DaggerGraph_NestedAppModule().makeNestedSessionScope().makeNestedFeatureScope()
+        #expect(throws: GraphError.self) { _ = try feature.nestedFeatureViewModel() }
+        #expect(NestedHeavyReport.initCount == 0)
+
+        NestedAuthState.user = "fsaldivar-dev"
+        _ = try feature.nestedFeatureViewModel()
+        #expect(NestedHeavyReport.initCount == 1)
+    }
+
     @Test("El runtime con la misma raíz se comporta igual (misma precondición indirecta)")
     func runtimeMatches() throws {
         NestedAuthState.user = nil

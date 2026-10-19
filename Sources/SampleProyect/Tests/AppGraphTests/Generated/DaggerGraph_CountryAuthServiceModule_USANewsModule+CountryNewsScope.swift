@@ -43,9 +43,15 @@ extension DaggerGraph_CountryAuthServiceModule_USANewsModule {
         private var _getLocalizedNewsFeedUseCase: GetLocalizedNewsFeedUseCase?
         func getLocalizedNewsFeedUseCase() throws -> GetLocalizedNewsFeedUseCase {
             if let cached = _getLocalizedNewsFeedUseCase { return cached }
+            try _pre_getLocalizedNewsFeedUseCase()
             let value = try GetLocalizedNewsFeedUseCase(session: parent.authenticatedCountrySession(), localeProvider: countryLocaleProviderProtocol(), newsRepository: countryNewsRepositoryProtocol())
             _getLocalizedNewsFeedUseCase = value
             return value
+        }
+
+        func _pre_getLocalizedNewsFeedUseCase() throws {
+            if _getLocalizedNewsFeedUseCase != nil { return }
+            _ = try parent.authenticatedCountrySession()
         }
     }
 }

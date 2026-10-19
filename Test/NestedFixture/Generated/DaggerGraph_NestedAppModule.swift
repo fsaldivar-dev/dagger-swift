@@ -29,6 +29,11 @@ final class DaggerGraph_NestedAppModule: @unchecked Sendable {
     }
 
     func nestedSessionGate() throws -> NestedSessionGate {
-        try NestedSessionGate(session: nestedSession())
+        try _pre_nestedSessionGate()
+        return try NestedSessionGate(session: nestedSession())
+    }
+
+    func _pre_nestedSessionGate() throws {
+        _ = try nestedSession()
     }
 }
