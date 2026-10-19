@@ -1164,11 +1164,16 @@ final class ProgrammerErrorPolicyStore: @unchecked Sendable {
         }
     }
 
-    /// Heurística: `swift test` (swiftpm-testing-helper / xctest) o Xcode (XCTestConfigurationFilePath).
+    /// Heurística: `swift test` en macOS (swiftpm-testing-helper / xctest), en Linux (el ejecutable
+    /// `<Paquete>PackageTests.xctest`) o Xcode (XCTestConfigurationFilePath).
     static let isRunningTests: Bool = {
         let info = ProcessInfo.processInfo
         let env = info.environment
+        let executable = CommandLine.arguments.first ?? ""
         return ["swiftpm-testing-helper", "xctest"].contains(info.processName)
+            || info.processName.hasSuffix(".xctest")
+            || info.processName.hasSuffix("PackageTests")
+            || executable.contains(".xctest")
             || env["XCTestConfigurationFilePath"] != nil
             || env["XCTestBundlePath"] != nil
             || env["XCTestSessionIdentifier"] != nil
