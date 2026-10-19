@@ -10,6 +10,7 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [
         .executable(name: "dagger-graph", targets: ["DaggerGraph"]),
+        .plugin(name: "DaggerGraphBuildPlugin", targets: ["DaggerGraphBuildPlugin"]),
     ],
     dependencies: [
         .package(url: "https://github.com/swiftlang/swift-syntax.git", "600.0.0"..<"601.0.0"),
@@ -22,6 +23,13 @@ let package = Package(
                 .product(name: "SwiftSyntax", package: "swift-syntax"),
             ],
             path: "Sources/DaggerGraph"
+        ),
+        // Valida el grafo en cada build (sale en milisegundos por la caché si nada cambió).
+        .plugin(
+            name: "DaggerGraphBuildPlugin",
+            capability: .buildTool(),
+            dependencies: ["DaggerGraph"],
+            path: "Plugins/DaggerGraphBuildPlugin"
         ),
     ]
 )

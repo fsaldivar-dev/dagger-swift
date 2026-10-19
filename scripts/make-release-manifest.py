@@ -56,6 +56,7 @@ let graphTargets: [Target] = []
 let coreTarget: Target = {binary("DaggerSwiftCore", a.core_url, a.core_checksum, a.core_path)}
 let graphProducts: [Product] = [
     .plugin(name: "DaggerGraphPlugin", targets: ["DaggerGraphPlugin"]),
+    .plugin(name: "DaggerGraphBuildPlugin", targets: ["DaggerGraphBuildPlugin"]),
 ]
 let graphTargets: [Target] = [
     {binary("dagger-graph", a.graph_url, a.graph_checksum, a.graph_path, indent="    ")},
@@ -66,6 +67,13 @@ let graphTargets: [Target] = [
         ),
         dependencies: ["dagger-graph"],
         path: "Plugins/DaggerGraphPlugin"
+    ),
+    // Misma fuente que en Tools/DaggerGraph, pero contra el binario: valida en cada build sin swift-syntax.
+    .plugin(
+        name: "DaggerGraphBuildPlugin",
+        capability: .buildTool(),
+        dependencies: ["dagger-graph"],
+        path: "Tools/DaggerGraph/Plugins/DaggerGraphBuildPlugin"
     ),
 ]
 #endif

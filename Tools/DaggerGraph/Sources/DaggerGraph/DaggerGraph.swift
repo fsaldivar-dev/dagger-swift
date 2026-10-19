@@ -88,21 +88,29 @@ struct DaggerGraphCommand {
         var args = Array(CommandLine.arguments.dropFirst())
         let timings = args.contains("--timings")
         let useCache = !args.contains("--no-cache")
-        var cachePath = ".build/dagger-graph-cache.json"
-        if let i = args.firstIndex(of: "--cache"), i + 1 < args.count {
-            cachePath = args[i + 1]
+        func option(_ name: String) -> String? {
+            guard let i = args.firstIndex(of: name), i + 1 < args.count else { return nil }
+            let value = args[i + 1]
             args.removeSubrange(i...(i + 1))
+            return value
         }
+        let cachePath = option("--cache") ?? ".build/dagger-graph-cache.json"
+        // Archivo Swift de salida para el build-tool plugin (se escribe solo si cambió).
+        let outputSwift = option("--output-swift")
         let roots = args.filter { !$0.hasPrefix("--") }
         guard !roots.isEmpty else {
-            FileHandle.standardError.write(Data("uso: dagger-graph [--timings] [--no-cache] [--cache <ruta>] <dir> [<dir> ...]\n".utf8))
+            FileHandle.standardError.write(Data("uso: dagger-graph [--timings] [--no-cache] [--cache <ruta>] [--output-swift <ruta>] <dir> [<dir> ...]\n".utf8))
             exit(2)
         }
 
         let clock = Clock()
 
         // 0. Enumeración + stat
-        let files = roots.flatMap(scan)
+        // Directorios solapados (p. ej. desde Xcode) no deben duplicar archivos.
+        var seenPaths = Set<String>()
+        let files = roots.flatMap(scan).filter {
+            seenPaths.insert(URL(fileURLWithPath: $0.path).standardizedFileURL.path).inserted
+        }
         var cache = CacheFile()
         if useCache, let data = FileManager.default.contents(atPath: cachePath),
            let decoded = try? JSONDecoder().decode(CacheFile.self, from: data),
@@ -118,6 +126,7 @@ struct DaggerGraphCommand {
 
         if unchanged, let diags = cache.diagnostics {
             emit(diags)
+            if let outputSwift { writeStamp(outputSwift, diagnostics: diags, files: cache.entries.count) }
             if timings {
                 let relevant = cache.entries.values.filter(\.relevant).count
                 FileHandle.standardError.write(Data((clock.report(parsed: 0, relevant: relevant, total: files.count, reused: relevant, fastPath: true) + "\n").utf8))
@@ -192,6 +201,7 @@ struct DaggerGraphCommand {
         clock.mark("validate")
 
         emit(diags)
+        if let outputSwift { writeStamp(outputSwift, diagnostics: diags, files: entries.count) }
 
         if useCache {
             cache.entries = entries
@@ -207,6 +217,19 @@ struct DaggerGraphCommand {
             FileHandle.standardError.write(Data((clock.report(parsed: trees.count, relevant: relevant, total: files.count, reused: reused, fastPath: false) + "\n").utf8))
         }
         exit(diags.contains { $0.severity == .error } ? 1 : 0)
+    }
+
+    /// Salida del build-tool plugin: un archivo Swift sin código (solo un comentario estable) que
+    /// SwiftPM/Xcode compilan con el target. Se reescribe solo si cambia, para no invalidar el build.
+    static func writeStamp(_ path: String, diagnostics: [Diagnostic], files: Int) {
+        let errors = diagnostics.filter { $0.severity == .error }.count
+        let warnings = diagnostics.filter { $0.severity == .warning }.count
+        let content = "// Generado por dagger-graph. No editar.\n// \(files) archivos · \(errors) errores · \(warnings) advertencias\n"
+        if let existing = try? String(contentsOfFile: path, encoding: .utf8), existing == content { return }
+        try? FileManager.default.createDirectory(
+            at: URL(fileURLWithPath: path).deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        try? content.write(toFile: path, atomically: true, encoding: .utf8)
     }
 
     static func emit(_ diags: [Diagnostic]) {
