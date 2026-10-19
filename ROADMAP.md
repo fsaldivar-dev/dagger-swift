@@ -61,5 +61,6 @@ ni los casos de uso. Y solo deben llegar a runtime los errores que dependen del 
 | `unmetPrecondition` | La `@Precondition` devuelve `nil` (p. ej. no hay sesión) | **Runtime**: depende del estado; es el caso real del Coordinator |
 
 - [ ] dagger-graph: detectar `scopeNotActive` estático (pedir un `@Scoped(X)` desde una raíz que nunca abre X) — C
-- [ ] Separar en el tipo: errores de programación (ciclo, no registrado, scope nunca abierto) → diagnóstico de compilación + `assertionFailure` en debug; errores de estado (`unmetPrecondition`, scope ya cerrado) → `throws` tipado (`throws(GraphRuntimeError)`, Swift 6) que el Coordinator maneja — C (propuesta, requiere decisión de F por compatibilidad)
+- [ ] Red de seguridad (recomendado): el runtime SIEMPRE sigue detectando todos los errores (el CLI puede no correr: plugin no aplicado, listas no literales, `bindInstance`, falsos negativos). Errores de programación → `assertionFailure` en DEBUG (truena fuerte al desarrollar) y en release se lanzan igual para que el `catch` único del Coordinator los registre (crash reporter) y muestre un fallback en vez de crashear. Agregar `GraphError.isProgrammerError` (no rompe compatibilidad) para distinguirlos — C
+- [ ] (Opcional, rompe API) `throws(GraphRuntimeError)` tipado solo con errores de estado — decisión de F
 - [ ] Documentar el patrón Coordinator: un solo `do/catch` en el coordinador que traduce `unmetPrecondition` a navegación (login, deep link pendiente) — C
