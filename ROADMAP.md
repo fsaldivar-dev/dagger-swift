@@ -1,6 +1,6 @@
 # Roadmap — CI/CD binario + validación compile-time
 
-Estado al 2026-10-19. Ramas locales: `spike/dagger-graph` → `ci/release-binaries` (sin push).
+Estado al 2026-10-19. Ramas locales: `spike/dagger-graph` → `ci/release-binaries` → `feat/compile-time-and-runtime-fixes` (sin push).
 
 Responsable: **F** = Francisco · **C** = Claude (en la Mac de Francisco).
 
@@ -32,3 +32,15 @@ Responsable: **F** = Francisco · **C** = Claude (en la Mac de Francisco).
 
 - [ ] Firmar el XCFramework (`codesign`) — F (requiere certificado)
 - [ ] README: flujo dev (fuente) vs. release (binario) y uso de `swift package dagger-graph` — C
+
+## 5. Pendientes del código generado (`dagger-graph generate`)
+
+- [ ] Thread-safety: hoy las clases generadas guardan singletons/scoped como un `lazy var` (sin lock). Opciones: lock por grafo o `@MainActor` siempre — C
+- [ ] Scopes anidados: hoy solo raíz → un nivel de scope (p. ej. Global → FintechScope). Falta Global → Sesión → Feature — C
+- [ ] `@Precondition` transitivas: hoy se evalúan primero solo las directas; el runtime revisa todo el subgrafo — C
+- [ ] Imports automáticos de módulos que solo declaran protocolos (hoy `--import` a mano) — C
+
+## 6. Notas de versión (próximo release)
+
+- [ ] **Cambio que puede romper compilación:** nuevo caso `GraphError.mainActorRequired`. Quien haga `switch` sobre `GraphError` sin `default` debe agregar ese caso (o un `default`) — F/C
+- [ ] Paquete partido en `DaggerSwiftCore` + `DaggerSwift` (la API pública no cambia; nombres en snapshots pasan a `DaggerSwiftCore.X`) — F/C
