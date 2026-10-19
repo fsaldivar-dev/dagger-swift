@@ -88,6 +88,8 @@ struct RootFact: Codable, Sendable {
     struct Requested: Codable, Sendable {
         var type: String
         var loc: Loc
+        /// Dentro de `#expect(throws:)` / `#require(throws:)`: el test espera que falle.
+        var expectsFailure: Bool = false
     }
     var kind: Kind
     /// Módulos en orden de registro; `nil` si la lista no es literal (no validable estáticamente).

@@ -27,7 +27,7 @@ struct CacheEntry: Codable, Sendable {
 }
 
 struct CacheFile: Codable {
-    static let currentVersion = 3
+    static let currentVersion = 4
     var version = CacheFile.currentVersion
     var roots: [String] = []
     var entries: [String: CacheEntry] = [:]

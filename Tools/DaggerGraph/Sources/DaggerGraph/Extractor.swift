@@ -233,9 +233,44 @@ final class FactExtractor: SyntaxVisitor {
     /// Post-orden: la llamada interna (`ScopeContainer.root(...)`) se registra antes que la externa
     /// (`.makeChildScope(...)`), así el hijo encuentra a su padre.
     override func visitPost(_ node: FunctionCallExprSyntax) {
-        guard let root = rootFact(for: node) else { return }
-        facts.roots.append(root)
-        rootIndexByCall[node.id] = facts.roots.count - 1
+        if let root = rootFact(for: node) {
+            facts.roots.append(root)
+            rootIndexByCall[node.id] = facts.roots.count - 1
+            return
+        }
+        // `x.resolve(T.self)` sobre una raíz conocida (variable local o llamada encadenada).
+        guard let member = node.calledExpression.as(MemberAccessExprSyntax.self),
+              member.declName.baseName.text == "resolve",
+              let base = member.base,
+              let first = node.arguments.first, first.label == nil,
+              first.expression.trimmedDescription.hasSuffix(".self") else { return }
+        var index: Int?
+        if let ref = base.as(DeclReferenceExprSyntax.self) {
+            index = rootVariables[ref.baseName.text]
+        } else if let call = Self.unwrapCall(base) {
+            index = rootIndexByCall[call.id]
+        }
+        guard let index else { return }
+        facts.roots[index].requested.append(RootFact.Requested(
+            type: TypeName.stripSelf(first.expression.trimmedDescription),
+            loc: loc(node),
+            expectsFailure: Self.insideExpectThrows(Syntax(node))
+        ))
+    }
+
+    /// ¿La llamada está dentro de `#expect(throws: ...) { ... }` o `#require(throws: ...)`?
+    private static func insideExpectThrows(_ node: Syntax) -> Bool {
+        var current = node.parent
+        while let n = current {
+            if let macro = n.as(MacroExpansionExprSyntax.self),
+               ["expect", "require"].contains(macro.macroName.text),
+               macro.arguments.contains(where: { $0.label?.text == "throws" }) {
+                return true
+            }
+            if n.is(FunctionDeclSyntax.self) { return false }
+            current = n.parent
+        }
+        return false
     }
 
     private func rootFact(for node: FunctionCallExprSyntax) -> RootFact? {

@@ -253,6 +253,45 @@ extension Validator {
         return (order, unknown, literal)
     }
 
+    /// Scopes que un módulo deja abiertos al registrarse en una caja: su `scope:` y sus `includes`
+    /// (cada include agrega su propio scope compatible), como hace `register(in:)` de la macro.
+    func compatibleScopes(of module: String, visited: Set<String> = []) -> Set<String> {
+        guard let fact = modules[module]?.fact, !visited.contains(module) else { return [] }
+        var out = Set<String>()
+        if let s = fact.scope { out.insert(s) }
+        for inc in fact.includes {
+            out.insert(inc)
+            out.formUnion(compatibleScopes(of: inc, visited: visited.union([module])))
+        }
+        return out
+    }
+
+    /// Scopes abiertos en la caja desde la que resuelve la raíz (además de Global).
+    func openScopes(of index: Int, visited: Set<Int> = []) -> Set<String> {
+        let entry = roots[index]
+        let listed = entry.root.modules ?? []
+        switch entry.root.kind {
+        case .root, .buildGraph:
+            // ScopeContainer.root: la caja Global ignora addCompatibleScope.
+            return []
+        case .expectGraph, .expectWhenCondition, .whenResolved:
+            // DaggerSwiftTesting abre un hijo por cada módulo listado.
+            return listed.reduce(into: Set<String>()) { $0.insert($1); $0.formUnion(compatibleScopes(of: $1)) }
+        case .moduleResolve:
+            // Modulo.resolve: hijo del runtime con el scope del módulo + extras registrados en él.
+            guard let first = listed.first else { return [] }
+            var out: Set<String> = [first]
+            for m in listed { out.formUnion(compatibleScopes(of: m)) }
+            return out
+        case .childScope:
+            var out = Set<String>()
+            if let p = entry.parent, !visited.contains(p) { out = openScopes(of: p, visited: visited.union([index])) }
+            if let scope = listed.first { out.insert(scope) }
+            for m in listed { out.formUnion(compatibleScopes(of: m)) }
+            return out
+        }
+    }
+
     func rootDiagnostics() -> [[Diagnostic]] {
         var out: [[Diagnostic]] = []
         for (i, entry) in roots.enumerated() {
@@ -328,8 +367,39 @@ extension Validator {
                     check(d.type, requiredBy: node.binding.origin, at: node.file, d.loc)
                 }
             }
+            // Tipos pedidos explícitamente: existencia + scope abierto.
+            let open = openScopes(of: i)
             for req in root.requested {
-                check(req.type, requiredBy: "el test", at: entry.file, req.loc)
+                let reqSeverity: Diagnostic.Severity = (req.expectsFailure || expectsFailure) ? .note : .error
+                let suffix = req.expectsFailure ? " (el test lo espera: #expect(throws:))" : ""
+                if !req.expectsFailure {
+                    check(req.type, requiredBy: "el test", at: entry.file, req.loc)
+                } else if provider(req.type) == nil, !provided.contains(req.type) {
+                    out.append([Diagnostic(
+                        file: entry.file, loc: req.loc, severity: .note,
+                        message: "raíz '\(root.text)': '\(req.type)' no está registrado\(suffix)"
+                    )])
+                    continue
+                }
+                // scopeNotActive estático: algún @Scoped(X) del subgrafo vive en un scope que esta raíz nunca abre.
+                var seen = Set<String>()
+                var stack = [req.type]
+                while let type = stack.popLast() {
+                    guard seen.insert(type).inserted, !provided.contains(type), let idx = provider(type) else { continue }
+                    let b = nodes[idx].binding
+                    if case .scope(let x) = b.lifetime, !open.contains(x) {
+                        let opened = open.isEmpty ? "solo Global" : open.sorted().joined(separator: ", ")
+                        out.append([
+                            Diagnostic(
+                                file: entry.file, loc: req.loc, severity: reqSeverity,
+                                message: "raíz '\(root.text)': pedir '\(req.type)' necesita el scope '\(x)' (por \(b.origin)), que esta raíz nunca abre [abiertos: \(opened)] — scopeNotActive en runtime; usa makeChildScope(for: \(x).self)\(suffix)"
+                            ),
+                            Diagnostic(file: nodes[idx].file, loc: b.loc, severity: .note, message: "'\(b.provides)' vive en el scope '\(x)'"),
+                        ])
+                        break
+                    }
+                    stack.append(contentsOf: b.deps.map(\.type))
+                }
             }
         }
         return out
