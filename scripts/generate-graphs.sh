@@ -17,3 +17,7 @@ G="$(swift build -c release --package-path Tools/DaggerGraph --show-bin-path)/da
   --import AppFoundation --import Core --import Services --import Features \
   --import MultiCountryNewsDemo --import FintechMockupDemo \
   Sources/SampleProyect
+
+# Fixture de scopes anidados: tiene tests propios (estado global compartido), sin tests de humo.
+"$G" generate --no-cache --out Test/NestedFixture/Generated \
+  --roots-in Test/NestedFixture Test/NestedFixture

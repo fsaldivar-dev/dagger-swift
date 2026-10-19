@@ -106,7 +106,27 @@ extension Validator {
             return preferred(providerIndices(for: type)?.filter { nodes[$0].binding.kind == .inject } ?? [])
         }
 
-        // Dónde vive cada nodo: raíz, o el único scope del que depende. nil = no generable.
+        // Jerarquía de scopes inferida de las dependencias: si algo @Scoped(X) depende de algo que vive
+        // en el scope Y, Y es ancestro de X (Global → Sesión → Feature).
+        var parentOf: [String: String] = [:]
+        func isAncestor(_ a: String, of b: String) -> Bool {
+            var current = parentOf[b]
+            var hops = 0
+            while let c = current, hops < 64 {
+                if c == a { return true }
+                current = parentOf[c]
+                hops += 1
+            }
+            return false
+        }
+        func depth(_ h: Home) -> Int {
+            guard case .scope(var s) = h else { return 0 }
+            var d = 1
+            while let p = parentOf[s], d < 64 { s = p; d += 1 }
+            return d
+        }
+
+        // Dónde vive cada nodo: raíz, o el scope más profundo de la cadena de la que depende. nil = no generable.
         var homes: [Int: Home?] = [:]
         var reasons: [Int: String] = [:]
         func home(_ idx: Int, stack: Set<Int> = []) -> Home? {
@@ -141,14 +161,25 @@ extension Validator {
                 result = scopes.isEmpty ? .root : nil
                 if result == nil { reasons[idx] = "@Singleton que depende de un scope" }
             case .scope(let s):
-                result = scopes.isSubset(of: [s]) ? .scope(s) : nil
-                if result == nil { reasons[idx] = "depende de otro scope" }
+                var ok = true
+                for y in scopes where y != s {
+                    if parentOf[s] == nil && !isAncestor(s, of: y) {
+                        parentOf[s] = y // primera evidencia: Y contiene a X
+                    }
+                    if !isAncestor(y, of: s) { ok = false }
+                }
+                result = ok ? .scope(s) : nil
+                if result == nil { reasons[idx] = "depende de scopes que no son ancestros de '\(s)'" }
             case .transient:
-                if scopes.count <= 1 {
-                    result = scopes.first.map { .scope($0) } ?? .root
+                // Vive en el scope más profundo, si todos los demás son sus ancestros.
+                let deepest = scopes.first { d in scopes.allSatisfy { $0 == d || isAncestor($0, of: d) } }
+                if scopes.isEmpty {
+                    result = .root
+                } else if let deepest {
+                    result = .scope(deepest)
                 } else {
                     result = nil
-                    reasons[idx] = "depende de varios scopes"
+                    reasons[idx] = "depende de scopes hermanos"
                 }
             }
             homes[idx] = .some(result)
@@ -168,6 +199,11 @@ extension Validator {
             if let current = byType[type], preferred([current, idx]) == current { continue }
             byType[type] = idx
         }
+
+        // Primera pasada: los @Scoped fijan la jerarquía; segunda: hogares definitivos con ella.
+        for idx in byType.values.sorted() where nodes[idx].binding.lifetime != .transient { _ = home(idx) }
+        homes.removeAll()
+        reasons.removeAll()
 
         var rootNodes: [Int] = []
         var scopeNodes: [String: [Int]] = [:]
@@ -199,10 +235,9 @@ extension Validator {
             let b = nodes[idx].binding
             func target(_ d: Dependency) -> String {
                 let p = provider(d.type)!
-                if case .scope = home, self.homeOf(p, homes) == .root {
-                    return "parent.\(accessor(p))()"
-                }
-                return "\(accessor(p))()"
+                // Subir tantos `parent.` como niveles separen al nodo de su dependencia.
+                let hops = max(0, depth(home) - depth(self.homeOf(p, homes) ?? .root))
+                return String(repeating: "parent.", count: hops) + "\(accessor(p))()"
             }
             let isPrecondition = b.deps.map { nodes[provider($0.type)!].binding.kind == .precondition }
             let hoist = isPrecondition.contains(true) && isPrecondition.first == false
@@ -283,26 +318,27 @@ extension Validator {
         smoke += mainActor ? "    @MainActor\n" : ""
         smoke += "    func smoke_\(graphName)() {\n"
         smoke += "        let root = ScopeContainer.root(modules: [\(listed.map { "\($0).self" }.joined(separator: ", "))])\n"
-        for scope in scopeNodes.keys.sorted() {
-            smoke += "        let \(Self.accessorName(scope))Box = root.makeChildScope(for: \(scope).self)\n"
+        let scopeNames = Self.scopesTopologically(Set(scopeNodes.keys).union(parentOf.values.filter { _ in true }), parentOf: parentOf)
+        for scope in scopeNames {
+            let parentBox = parentOf[scope].map { "\(Self.accessorName($0))Box" } ?? "root"
+            smoke += "        let \(Self.accessorName(scope))Box = \(parentBox).makeChildScope(for: \(scope).self)\n"
         }
         for idx in rootNodes {
             smoke += "        smokeResolve(root, \(Self.metatype(Self.returnType(nodes[idx].binding))))\n"
         }
-        for scope in scopeNodes.keys.sorted() {
+        for scope in scopeNames {
             for idx in scopeNodes[scope] ?? [] {
                 smoke += "        smokeResolve(\(Self.accessorName(scope))Box, \(Self.metatype(Self.returnType(nodes[idx].binding))))\n"
             }
         }
         smoke += "    }\n"
         var files: [GeneratedFile] = []
-        let scopeNames = scopeNodes.keys.sorted()
 
         var rootFile = Self.header + imports
         rootFile += "\n/// Grafo generado para la raíz [\(order.joined(separator: ", "))]: factories directas, sin `resolve`.\n"
         rootFile += "\(isolation)final class \(graphName)\(sendable) {\n"
         rootFile += mainActor ? "    init() {}\n" : "    let lock = NSRecursiveLock()\n    init() {}\n"
-        for scope in scopeNames {
+        for scope in scopeNames where parentOf[scope] == nil {
             rootFile += "\n    /// Abre el scope `\(scope)` (sus `@Scoped` viven mientras viva el objeto devuelto).\n"
             rootFile += "    func make\(Self.typeIdentifier(scope))() -> \(Self.scopeClass(scope)) { \(Self.scopeClass(scope))(parent: self) }\n"
         }
@@ -317,8 +353,13 @@ extension Validator {
             f += "\nextension \(graphName) {\n"
             f += "    /// Scope `\(scope)` del grafo [\(order.joined(separator: ", "))].\n"
             f += "    \(isolation.isEmpty ? "" : "@MainActor\n    ")final class \(Self.scopeClass(scope))\(sendable) {\n"
-            f += "        let parent: \(graphName)\n        init(parent: \(graphName)) { self.parent = parent }\n"
+            let parentClass = parentOf[scope].map(Self.scopeClass) ?? graphName
+            f += "        let parent: \(parentClass)\n        init(parent: \(parentClass)) { self.parent = parent }\n"
             if !mainActor { f += "        var lock: NSRecursiveLock { parent.lock }\n" }
+            for child in scopeNames where parentOf[child] == scope {
+                f += "\n        /// Abre el scope hijo `\(child)`.\n"
+                f += "        func make\(Self.typeIdentifier(child))() -> \(Self.scopeClass(child)) { \(Self.scopeClass(child))(parent: self) }\n"
+            }
             for idx in scopeNodes[scope] ?? [] {
                 f += "\n" + body(idx, home: .scope(scope)).split(separator: "\n", omittingEmptySubsequences: false)
                     .map { $0.isEmpty ? "" : "    " + $0 }.joined(separator: "\n") + "\n"
@@ -327,6 +368,16 @@ extension Validator {
             files.append(GeneratedFile(name: "\(graphName)+\(Self.typeIdentifier(scope)).swift", content: f))
         }
         return (files, skipped, smoke, importSet)
+    }
+
+    /// Scopes ordenados de padres a hijos (para abrir las cajas en el orden correcto).
+    static func scopesTopologically(_ scopes: Set<String>, parentOf: [String: String]) -> [String] {
+        func depth(_ s: String) -> Int {
+            var d = 0, cur = s
+            while let p = parentOf[cur], d < 64 { cur = p; d += 1 }
+            return d
+        }
+        return scopes.sorted { (depth($0), $0) < (depth($1), $1) }
     }
 
     private func homeOf(_ idx: Int, _ homes: [Int: Home?]) -> Home? {

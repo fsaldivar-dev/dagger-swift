@@ -79,7 +79,7 @@ jobs:
       - name: Código generado al día (dagger-graph generate)
         run: |
           scripts/generate-graphs.sh
-          GEN="Benchmarks/Tests/DIFrameworksDebateTests/Generated Sources/SampleProyect/Tests/AppGraphTests/Generated"
+          GEN="Benchmarks/Tests/DIFrameworksDebateTests/Generated Sources/SampleProyect/Tests/AppGraphTests/Generated Test/NestedFixture/Generated"
           if [ -n "$(git status --porcelain -- $GEN)" ]; then
             git status --porcelain -- $GEN
             echo "::error::El código generado está desactualizado: corre scripts/generate-graphs.sh y commitea."
