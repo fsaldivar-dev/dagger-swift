@@ -79,12 +79,43 @@ struct DaggerSwiftMacrosPlugin {
 
     // MARK: - Dispatcher de Macros
 
-    private static func handleExpandAttachedMacro(_ payload: [String: Any]) -> [String: Any] {
+    // MARK: - Diagnósticos (campo `diagnostics` del protocolo del plugin)
+
+    /// Diagnósticos de la expansión en curso (un mensaje a la vez: el plugin es secuencial).
+    nonisolated(unsafe) private static var pendingDiagnostics: [[String: Any]] = []
+    nonisolated(unsafe) private static var currentDecl: (source: String, fileName: String, offset: Int)?
+
+    /// Emite un error del compilador apuntando a `needle` dentro de la declaración (o a su inicio).
+    static func diagnose(_ message: String, at needle: String?) {
+        guard let decl = currentDecl else { return }
+        var offset = decl.offset
+        if let needle, let range = decl.source.range(of: needle) {
+            offset += decl.source.utf8.distance(from: decl.source.startIndex, to: range.lowerBound)
+        }
+        pendingDiagnostics.append([
+            "message": message,
+            "severity": "error",
+            "position": ["fileName": decl.fileName, "offset": offset],
+            "highlights": [] as [Any],
+            "notes": [] as [Any],
+            "fixIts": [] as [Any],
+        ])
+    }
+
+    static func handleExpandAttachedMacro(_ payload: [String: Any]) -> [String: Any] {
         let macroInfo = payload["macro"] as? [String: Any]
         let typeName = (macroInfo?["typeName"] as? String) ?? ""
         let macroRole = (payload["macroRole"] as? String) ?? ""
         let attrSource = ((payload["attributeSyntax"] as? [String: Any])?["source"] as? String) ?? ""
-        let declSource = ((payload["declSyntax"] as? [String: Any])?["source"] as? String) ?? ""
+        let declSyntax = payload["declSyntax"] as? [String: Any]
+        let declSource = (declSyntax?["source"] as? String) ?? ""
+        let declLocation = declSyntax?["location"] as? [String: Any]
+        pendingDiagnostics = []
+        currentDecl = (
+            declSource,
+            (declLocation?["fileName"] as? String) ?? "",
+            (declLocation?["offset"] as? Int) ?? 0
+        )
         let extendedType = ((payload["extendedTypeSyntax"] as? [String: Any])?["source"] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
@@ -132,7 +163,7 @@ struct DaggerSwiftMacrosPlugin {
         }
 
         var resultDict: [String: Any] = [
-            "diagnostics": [] as [Any]
+            "diagnostics": pendingDiagnostics
         ]
         if let expanded, !expanded.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             resultDict["expandedSource"] = expanded
@@ -335,6 +366,14 @@ struct DaggerSwiftMacrosPlugin {
         let clean = stripComments(declSource)
         let scopeArg = extractInjectScopeArgument(from: attrSource)
         let hasExplicitInit = containsExplicitInitializer(in: clean)
+        if hasExplicitInit, explicitInitIsAsync(in: clean) {
+            diagnose(
+                "@Inject: el init no puede ser async; el grafo construye de forma síncrona. Usa un init síncrono y mueve el trabajo asíncrono a un método",
+                at: "init("
+            )
+            // Solo el stub de la conformancia: evita errores en cascada ('async' call...) sobre el diagnóstico.
+            return "nonisolated public static func register(in container: DaggerSwift.ScopeContainer) {}"
+        }
         let properties = parseInjectableStoredProperties(from: clean)
         // Parámetros con valor por defecto (`retries: Int = 3`) no se piden al grafo: se usa el default.
         let initParams = (hasExplicitInit ? parseExplicitInitParameters(from: clean) : properties).filter { !$0.hasDefault }
@@ -422,6 +461,16 @@ struct DaggerSwiftMacrosPlugin {
         case provider
         case businessRule
         case precondition(String?)
+
+        var attributeName: String {
+            switch self {
+            case .singleton: return "@Singleton"
+            case .scoped: return "@Scoped"
+            case .provider: return "@Provider"
+            case .businessRule: return "@BusinessRule"
+            case .precondition: return "@Precondition"
+            }
+        }
     }
 
     private struct ParsedParam {
@@ -621,9 +670,22 @@ struct DaggerSwiftMacrosPlugin {
             let params = parseParameterList(paramsString)
 
             let afterParams = String(afterFunc[afterFunc.index(after: closeParen)...])
-            guard let arrowRange = afterParams.range(of: "->") else { continue }
+            guard let arrowRange = afterParams.range(of: "->") else {
+                diagnose(
+                    "\(kind.attributeName) '\(funcName)()' necesita un tipo de retorno (-> Tipo): el grafo registra cada función por el tipo que devuelve",
+                    at: "func \(funcName)"
+                )
+                continue
+            }
             let beforeArrow = String(afterParams[..<arrowRange.lowerBound])
             let isThrowing = beforeArrow.contains("throws")
+            if beforeArrow.contains("async") {
+                diagnose(
+                    "\(kind.attributeName) '\(funcName)()' no puede ser async: el grafo construye las dependencias de forma síncrona. Hazla síncrona, o resuelve el valor asíncrono fuera del grafo (p. ej. en el Coordinator) y pásalo con bindInstance",
+                    at: "func \(funcName)"
+                )
+                continue
+            }
 
             let afterArrow = String(afterParams[arrowRange.upperBound...])
             let returnEnd = afterArrow.firstIndex(of: "{") ?? afterArrow.endIndex
@@ -685,6 +747,19 @@ struct DaggerSwiftMacrosPlugin {
             let trimmed = d.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed.hasPrefix("init(") || trimmed.contains(" init(") || trimmed.contains("\ninit(")
         }
+    }
+
+    private static func explicitInitIsAsync(in source: String) -> Bool {
+        let body = extractOuterBracesBody(from: source)
+        for d in splitTopLevelDeclarations(in: body) {
+            guard let initRange = d.range(of: "init(") else { continue }
+            let fromParen = String(d[d.index(before: initRange.upperBound)...])
+            guard let close = findMatchingParen(in: fromParen, from: fromParen.startIndex) else { continue }
+            let afterParams = fromParen[fromParen.index(after: close)...]
+            let header = afterParams.prefix { $0 != "{" }
+            return header.contains("async")
+        }
+        return false
     }
 
     private static func parseExplicitInitParameters(from source: String) -> [ParsedParam] {
