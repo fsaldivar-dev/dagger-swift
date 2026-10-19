@@ -1,21 +1,32 @@
-# Release: el runtime se distribuye como BINARIO (XCFramework) y dagger-graph como artifactbundle.
-# `main` sigue en fuente; solo el commit al que apunta el tag usa binaryTarget(url:checksum:).
+# Release (disparo MANUAL): el runtime se distribuye como BINARIO (XCFramework) y dagger-graph como
+# artifactbundle. `main` sigue en fuente; solo el commit del tag usa binaryTarget(url:checksum:).
 #
-# Flujo al hacer push de un tag vX.Y.Z (sobre un commit de main):
-#   1. Tests del paquete.
-#   2. scripts/release-dry-run.sh: XCFramework + artifactbundle + checksums + Package.swift de
-#      release + verificación con un consumidor real (binaryTarget(path:)).
-#   3. GitHub Release en borrador con los zips.
-#   4. Commit solo-para-el-tag con el Package.swift binario; el tag se mueve a ese commit.
-#   5. Se publica el Release.
+# Actions → Release → Run workflow → versión (p. ej. v2.1.0 o v2.1.0-rc.1):
+#   1. Valida la versión y que el tag NO exista (nunca se mueve un tag).
+#   2. Tests + scripts/release-dry-run.sh: XCFramework + artifactbundle + checksums + Package.swift de
+#      release + consumidor real en macOS e iOS Simulator contra el binario.
+#   3. Commit solo-para-el-release en una rama temporal (release/<versión>).
+#   4. GitHub Release en BORRADOR con los zips, apuntando a ese commit (el tag aún no existe).
+#   5. Publicar el Release crea el tag sobre ese commit → nunca hay un tag sin sus binarios.
+#   6. Borra la rama temporal (el commit queda alcanzable por el tag). Si algo falla, la rama queda.
+# Versiones con sufijo (-rc.1, -beta.2) se publican como pre-release.
 name: Release
 
 on:
-  push:
-    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Versión semver con prefijo v (p. ej. v2.1.0 o v2.1.0-rc.1)"
+        required: true
+        type: string
+      ref:
+        description: "Rama o commit desde el que se publica"
+        required: false
+        default: main
+        type: string
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release
   cancel-in-progress: false
 
 permissions:
@@ -25,23 +36,28 @@ jobs:
   release:
     runs-on: macos-15
     env:
-      VERSION: ${{ github.ref_name }}
+      VERSION: ${{ inputs.version }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       OUT: .build/release-artifacts
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.ref }}
           fetch-depth: 0
       - uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest-stable
 
-      # Mover el tag con GITHUB_TOKEN no vuelve a disparar workflows; esto cubre el caso de un PAT.
-      - name: Guard (el tag no debe apuntar ya a un commit de release)
+      - name: Validar versión y que el tag no exista
         run: |
-          if git log -1 --format=%s | grep -q '^release:'; then
-            echo "El tag $VERSION ya apunta a un commit de release; nada que hacer."
-            exit 1
+          if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::Versión inválida: '$VERSION' (formato vX.Y.Z o vX.Y.Z-rc.N)"; exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/$VERSION" >/dev/null; then
+            echo "::error::El tag $VERSION ya existe; los tags no se mueven. Usa otra versión."; exit 1
+          fi
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            echo "::error::Ya existe un Release (o borrador) $VERSION. Bórralo o usa otra versión."; exit 1
           fi
 
       - name: Test
@@ -50,22 +66,31 @@ jobs:
       - name: Construir y verificar artefactos (idéntico al ensayo local)
         run: scripts/release-dry-run.sh "$VERSION"
 
-      - name: GitHub Release (borrador) con assets
-        run: |
-          gh release create "$VERSION" --draft --verify-tag --generate-notes \
-            --title "DaggerSwift $VERSION" \
-            "$OUT/DaggerSwiftCore.xcframework.zip" \
-            "$OUT/dagger-graph.artifactbundle.zip"
-
-      - name: Commit solo-para-el-tag + mover el tag
+      - name: Commit de release en una rama temporal
+        id: commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout --detach
           cp "$OUT/Package.release.swift" Package.swift
           git commit -am "release: $VERSION (binaryTarget DaggerSwiftCore + dagger-graph)"
-          git tag -f "$VERSION"
-          git push -f origin "refs/tags/$VERSION"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          git push origin "HEAD:refs/heads/release/$VERSION"
 
-      - name: Publicar Release
+      - name: GitHub Release en borrador (sin tag todavía)
+        run: |
+          PRERELEASE=""
+          [[ "$VERSION" == *-* ]] && PRERELEASE="--prerelease"
+          gh release create "$VERSION" --draft $PRERELEASE --generate-notes \
+            --target "${{ steps.commit.outputs.sha }}" \
+            --title "DaggerSwift $VERSION" \
+            "$OUT/DaggerSwiftCore.xcframework.zip" \
+            "$OUT/dagger-graph.artifactbundle.zip"
+
+      - name: Publicar (crea el tag sobre el commit de release)
         run: gh release edit "$VERSION" --draft=false
+
+      # Solo si se publicó: si algo falla antes, la rama queda para depurar y el borrador sigue apuntando
+      # a un commit alcanzable (se puede publicar a mano o borrar ambos).
+      - name: Limpiar rama temporal
+        run: git push origin --delete "release/$VERSION"

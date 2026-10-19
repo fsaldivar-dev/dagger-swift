@@ -1005,8 +1005,11 @@ Costos medidos (Apple Silicon): repo completo en frío ~15 ms, sin cambios ~5 ms
 ## 8. 📦 Distribución: dev desde fuente, release como binario
 
 - **`main` / desarrollo:** todo desde fuente (`swift build`, CI en cada PR: [`ci.yml`](./.github/workflows/ci.yml)).
-- **Release (tag `v*`):** [`release.yml`](./.github/workflows/release.yml) publica `DaggerSwiftCore.xcframework`
-  (el runtime) y `dagger-graph.artifactbundle`; el commit del tag usa `binaryTarget(url:checksum:)`.
+- **Release (botón manual):** Actions → Release → *Run workflow* con la versión (`v2.1.0`, o `v2.1.0-rc.1` para
+  pre-release). [`release.yml`](./.github/workflows/release.yml) prueba, construye y verifica (macOS + iOS Simulator),
+  publica `DaggerSwiftCore.xcframework` (el runtime) y `dagger-graph.artifactbundle`, y crea el tag sobre un commit
+  cuyo `Package.swift` usa `binaryTarget(url:checksum:)`. El tag nace al publicar: nunca existe sin sus binarios
+  y nunca se mueve.
   Las **macros siguen en fuente** (SwiftPM no admite macros binarias): `DaggerSwift` es un target delgado con las
   declaraciones de macros + `@_exported import DaggerSwiftCore`. En Linux el manifiesto cae a fuente.
 - Ensayo local completo, sin publicar nada: `scripts/release-dry-run.sh`.
