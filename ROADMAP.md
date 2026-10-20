@@ -1,6 +1,6 @@
 # Roadmap — CI/CD binario + validación compile-time
 
-Estado al 2026-10-19. Ramas locales: `spike/dagger-graph` → `ci/release-binaries` → `feat/compile-time-and-runtime-fixes` (sin push).
+Estado al 2026-10-19. PR: https://github.com/fsaldivar-dev/dagger-swift/pull/2 (`feat/compile-time-and-runtime-fixes`, CI en verde).
 
 Responsable: **F** = Francisco · **C** = Claude (en la Mac de Francisco).
 
@@ -10,9 +10,11 @@ Responsable: **F** = Francisco · **C** = Claude (en la Mac de Francisco).
 - [x] Split `DaggerSwiftCore` (runtime binario) + `DaggerSwift` (macros, fuente) — C
 - [x] `ci.yml` (fuente) y `release.yml` (XCFramework + artifactbundle) + ensayo en seco local — C
 - [x] Cambiar el release a `workflow_dispatch` (crea el tag sobre el commit binario, sin moverlo) — C
-- [ ] Push de las ramas y PR — C (requiere OK de F)
+- [x] Push y PR #2 — C
 - [ ] Settings › Actions › Workflow permissions: *Read and write* (el release ya no mueve tags) — F
-- [ ] Primera corrida de CI en GitHub: confirmar Swift 6 + platforms tvOS/watchOS/visionOS en `macos-15` — C/F
+- [x] Primera corrida de CI en GitHub: 6/6 en verde (macOS, Linux, SampleProyect, Benchmarks, dagger-graph) — C
+- [ ] Revisar y hacer merge del PR #2 — F
+- [ ] Slices tvOS/watchOS/visionOS: se confirman en el primer release (el CI de PR no construye el XCFramework) — C
 - [ ] Definir versión (propuesta: `v2.1.0`; ojo: nombres de tipos del runtime en snapshots pasan a `DaggerSwiftCore.X`) — F
 - [ ] Pre-release `v2.1.0-rc.1` (valida el flujo binario de punta a punta) — F dispara, C revisa
 - [ ] Release `v2.1.0` — F
@@ -77,4 +79,4 @@ ni los casos de uso. Y solo deben llegar a runtime los errores que dependen del 
 ## 9. Plataformas
 
 - [x] Job de Linux en CI (`swift:6.1`, no bloqueante hasta su primera corrida en verde) — C
-- [ ] Confirmar Linux en la primera corrida del CI y volverlo bloqueante — C
+- [x] Linux confirmado (40/40 en swift:6.1, tras 4 arreglos) y ahora bloqueante — C

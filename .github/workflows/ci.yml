@@ -32,9 +32,6 @@ jobs:
     name: DaggerSwift en Linux (build + test)
     runs-on: ubuntu-latest
     container: swift:6.1
-    # Nunca se ha probado en Linux real (sin Docker en la Mac de desarrollo): informa sin bloquear el PR.
-    # Quitar continue-on-error cuando salga en verde.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - run: swift --version
