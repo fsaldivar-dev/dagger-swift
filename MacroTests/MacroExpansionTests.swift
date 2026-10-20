@@ -126,6 +126,22 @@ struct MacroExpansionTests {
         #expect(e.source.contains("(Box<(Int, String) -> Bool>).self"))
     }
 
+    @Test("@Module @MainActor: las funciones se construyen vía onMainActor (salvo nonisolated)")
+    func mainActorModule() {
+        let e = expand("ModuleMacro", attribute: "@Module", decl: """
+        @MainActor
+        @Module
+        enum AppModule {
+            @Singleton
+            static func theme() -> Theme { .shared }
+            @Provider
+            nonisolated static func name() -> String { "x" }
+        }
+        """)
+        #expect(e.source.contains("try DaggerSwift.ScopeContainer.onMainActor { Self.theme() }"))
+        #expect(e.source.contains("        Self.name()"))
+    }
+
     @Test("@Module: función async → diagnóstico claro en la posición de la función")
     func asyncFunctionDiagnostic() {
         let decl = """

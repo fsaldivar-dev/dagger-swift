@@ -266,7 +266,11 @@ struct DaggerSwiftMacrosPlugin {
         let moduleVersion = extractModuleVersion(from: attrSource)
         let moduleScope = extractModuleScope(from: attrSource)
         let includedModules = extractModuleIncludes(from: attrSource)
-        let functions = parseModuleFunctions(from: clean)
+        // Módulo @MainActor (p. ej. objetos @Observable de SwiftUI): sus funciones están aisladas al
+        // MainActor y el closure de register(in:) no lo está → se construyen vía ScopeContainer.onMainActor.
+        let moduleHeader = clean.firstIndex(of: "{").map { String(clean[..<$0]) } ?? clean
+        let moduleIsMainActor = moduleHeader.contains("@MainActor")
+        let functions = parseModuleFunctions(from: clean, moduleIsMainActor: moduleIsMainActor)
 
         var lines: [String] = []
         lines.append("nonisolated public static let moduleVersion: String = \"\(moduleVersion)\"")
@@ -306,9 +310,12 @@ struct DaggerSwiftMacrosPlugin {
                 }.joined(separator: ", ")
             }
 
-            let invocation = fn.isThrowing
+            let call = fn.isThrowing
                 ? "try Self.\(fn.name)(\(callArgs))"
                 : "Self.\(fn.name)(\(callArgs))"
+            let invocation = fn.isMainActor
+                ? "try DaggerSwift.ScopeContainer.onMainActor { \(call) }"
+                : call
             let returnTypeSelf = fn.returnType.contains(" ") ? "(\(fn.returnType)).self" : "\(fn.returnType).self"
 
             switch fn.kind {
@@ -497,6 +504,8 @@ struct DaggerSwiftMacrosPlugin {
         let parameters: [ParsedParam]
         let returnType: String
         let isThrowing: Bool
+        /// `@MainActor` en la función (o en el módulo, salvo `nonisolated`): se construye vía onMainActor.
+        var isMainActor: Bool = false
     }
 
     private static func stripComments(_ source: String) -> String {
@@ -660,7 +669,7 @@ struct DaggerSwiftMacrosPlugin {
         return String(afterColon[..<endIdx]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private static func parseModuleFunctions(from source: String) -> [ParsedFunction] {
+    private static func parseModuleFunctions(from source: String, moduleIsMainActor: Bool = false) -> [ParsedFunction] {
         let body = extractOuterBracesBody(from: source)
         var results: [ParsedFunction] = []
 
@@ -701,13 +710,17 @@ struct DaggerSwiftMacrosPlugin {
             let returnEnd = afterArrow.firstIndex(of: "{") ?? afterArrow.endIndex
             let returnType = String(afterArrow[..<returnEnd]).trimmingCharacters(in: .whitespacesAndNewlines)
 
+            let funcHeader = String(decl[..<funcRange.lowerBound])
+            let isMainActor = funcHeader.contains("@MainActor")
+                || (moduleIsMainActor && !funcHeader.contains("nonisolated"))
             results.append(
                 ParsedFunction(
                     kind: kind,
                     name: funcName,
                     parameters: params,
                     returnType: returnType,
-                    isThrowing: isThrowing
+                    isThrowing: isThrowing,
+                    isMainActor: isMainActor
                 )
             )
         }

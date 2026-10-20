@@ -93,7 +93,8 @@ final class FactExtractor: SyntaxVisitor {
                 includes = arr.elements.map { TypeName.stripSelf($0.expression.trimmedDescription) }
             }
             facts.modules.append(ModuleFact(name: qualified, scope: moduleScope, includes: includes, loc: loc(node)))
-            moduleBindings(members, module: qualified, moduleScope: moduleScope)
+            moduleBindings(members, module: qualified, moduleScope: moduleScope,
+                           moduleIsMainActor: attribute(named: "MainActor", in: attributes) != nil)
         }
         return .visitChildren
     }
@@ -140,7 +141,7 @@ final class FactExtractor: SyntaxVisitor {
 
     // MARK: - @Module
 
-    private func moduleBindings(_ members: MemberBlockSyntax, module: String, moduleScope: String?) {
+    private func moduleBindings(_ members: MemberBlockSyntax, module: String, moduleScope: String?, moduleIsMainActor: Bool = false) {
         for member in members.members {
             guard let fn = member.decl.as(FunctionDeclSyntax.self),
                   let ret = fn.signature.returnClause?.type else { continue }
@@ -190,6 +191,9 @@ final class FactExtractor: SyntaxVisitor {
                     function: fn.name.text,
                     isThrowing: fn.signature.effectSpecifiers?.throwsClause != nil,
                     spelledType: ret.trimmedDescription,
+                    // Igual que la macro: @MainActor en la función, o en el módulo salvo `nonisolated`.
+                    isMainActor: attribute(named: "MainActor", in: attrs) != nil
+                        || (moduleIsMainActor && !fn.modifiers.contains { $0.name.text == "nonisolated" }),
                     reason: reason
                 )
             )

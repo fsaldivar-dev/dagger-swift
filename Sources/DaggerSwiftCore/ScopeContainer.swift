@@ -1108,13 +1108,19 @@ final class PendingBuild: @unchecked Sendable {
 public extension ScopeContainer {
     /// Usado por la expansión de `@Inject` en tipos `@MainActor`: construye en el hilo principal
     /// o lanza `GraphError.mainActorRequired` (antes: crash de `MainActor.assumeIsolated`).
-    static func onMainActor<T: Sendable>(_ body: @MainActor () throws -> T) throws -> T {
+    static func onMainActor<T>(_ body: @MainActor () throws -> T) throws -> T {
         // En Linux el MainActor no garantiza correr en el hilo principal del proceso: `resolveOnMainActor`
         // marca explícitamente que ya estamos aislados al MainActor.
         guard Thread.isMainThread || MainActorResolution.isActive else {
             throw reportProgrammerError(.mainActorRequired(type: String(reflecting: T.self)))
         }
-        return try MainActor.assumeIsolated(body)
+        // El resultado sale del MainActor hacia el resolver: igual que el resto del grafo, que no es
+        // Sendable por diseño (los tipos @MainActor sí lo son; existenciales `any P` pueden no serlo).
+        nonisolated(unsafe) var result: T?
+        try MainActor.assumeIsolated {
+            result = try body()
+        }
+        return result!
     }
 
     /// Resuelve `T` saltando al `MainActor` (para ViewModels `@MainActor @Inject` pedidos desde background).
