@@ -1109,8 +1109,9 @@ public extension ScopeContainer {
     /// Usado por la expansión de `@Inject` en tipos `@MainActor`: construye en el hilo principal
     /// o lanza `GraphError.mainActorRequired` (antes: crash de `MainActor.assumeIsolated`).
     static func onMainActor<T>(_ body: @MainActor () throws -> T) throws -> T {
-        // En Linux el MainActor no garantiza correr en el hilo principal del proceso: `resolveOnMainActor`
-        // marca explícitamente que ya estamos aislados al MainActor.
+        // En Linux el MainActor no garantiza correr en el hilo principal del proceso y Swift no tiene una
+        // consulta pública de aislamiento sin trap: ahí, desde código @MainActor, usa `resolveOnMainActor`,
+        // que marca explícitamente que la resolución ya está aislada al MainActor.
         guard Thread.isMainThread || MainActorResolution.isActive else {
             throw reportProgrammerError(.mainActorRequired(type: String(reflecting: T.self)))
         }

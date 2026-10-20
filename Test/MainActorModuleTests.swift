@@ -40,12 +40,20 @@ struct MainActorModuleTests {
 
     @MainActor
     @Test("Desde el MainActor se resuelve y el singleton es el mismo")
-    func resolvesOnMainActor() throws {
+    func resolvesOnMainActor() async throws {
         let graph = ScopeContainer.root(modules: [MainActorAppModule.self])
+        #if canImport(Darwin)
         let theme = try graph.resolve(MainActorModuleTheme.self)
+        #else
+        // En Linux el MainActor no corre necesariamente en el hilo principal y Swift no ofrece una
+        // consulta pública de aislamiento sin trap: desde código @MainActor se usa resolveOnMainActor.
+        let theme = try await graph.resolveOnMainActor(MainActorModuleTheme.self)
+        #endif
         let sameTheme = theme === MainActorModuleTheme.shared
         #expect(sameTheme)
+        #if canImport(Darwin)
         _ = try graph.resolve((any MainActorModuleToasts).self)
+        #endif
         #expect(try graph.resolve(String.self) == "hola")
     }
 

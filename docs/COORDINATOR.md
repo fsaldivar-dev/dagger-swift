@@ -58,3 +58,9 @@ Reglas:
 2. **No uses `try?`** para resolver: oculta errores de programación.
 3. Si un `catch` de error de programación se dispara en producción, agrega esa raíz a la validación
    (`dagger-graph`, `generate --smoke-tests`): es una raíz que el análisis estático no vio.
+
+## Nota: tipos `@MainActor` en Linux
+
+En plataformas Apple, resolver un tipo `@MainActor` (un `@Inject` o un `@Module @MainActor`) desde código que corre en
+el MainActor funciona directo. En Linux el MainActor no corre necesariamente en el hilo principal y Swift no ofrece
+una consulta pública de aislamiento que no haga trap, así que ahí usa `try await container.resolveOnMainActor(T.self)`.
