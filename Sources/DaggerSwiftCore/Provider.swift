@@ -22,7 +22,9 @@
 /// let vm = try session.timeline()                          // construye con sus dependencias del grafo
 /// ```
 /// Es el `Provider<T>` de Dagger: la pieza que recibe la fábrica no conoce el grafo, solo puede pedir `T`.
-public struct Provider<T> {
+/// `@unchecked Sendable`: es inmutable y su closure solo captura el `ScopeContainer` (Sendable); así una
+/// vista o un actor pueden guardarla y llamarla desde el contexto que corresponda al tipo que construye.
+public struct Provider<T>: @unchecked Sendable {
     private let make: () throws -> T
 
     public init(_ make: @escaping () throws -> T) {
