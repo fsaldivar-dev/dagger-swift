@@ -31,42 +31,142 @@ targets: [
 
 ## 1. Declara qué construye cada cosa: `@Module`
 
-Un módulo es un `enum` con funciones estáticas. Cada función es una receta; el decorador dice cuánto vive.
+Un módulo es un `enum` con funciones estáticas. Cada función es una receta: sus parámetros son sus
+dependencias y el decorador dice cuánto vive. **El módulo crea el objeto.** Si devuelve `Algo.shared`, el
+grafo es decorativo (ver §5.7).
+
+| Decorador | Vive | En el compositor se declara como | Úsalo para |
+|---|---|---|---|
+| `@Singleton` | Toda la app | `let x: T` en `@AppCompose` | Tema, preferencias, cliente HTTP base |
+| `@Scoped` | Mientras el scope esté abierto | `let x: T` en un `@Compose` | Lo que depende de la cuenta, del flujo, de la pantalla |
+| `@Provider` | Una instancia por petición | `let x: Provider<T>` | View models y casos de uso sin estado compartido |
+| `@Precondition` | Se evalúa antes de construir | `let x: T` en el `@Compose` que la exige | Sesión, permisos, país activo |
+| `@BusinessRule` | Se reevalúa al consultar | `let x: Provider<T>` | Feature flags, variantes A/B |
+
+La columna del medio es la que importa: un `let` normal se resuelve **una vez, al abrir ese nivel**; un
+`Provider<T>` se resuelve **en cada llamada**. Declarar un `@Provider` o un `@BusinessRule` como `let`
+compila, pero congela una instancia por scope y pierdes justo lo que el decorador prometía.
+
+Cada decorador, de punta a punta: módulo → compositor → raíz o vista.
+
+### `@Singleton`: existe toda la app
 
 ```swift
-import DaggerSwift
-
-@MainActor            // si tus objetos son @Observable de SwiftUI
-@Module
+@MainActor @Module
 enum AppModule {
-    @Singleton static func theme() -> Theme { Theme() }                 // toda la app
-    @Singleton static func apiClient() -> any ApiClient { LiveApiClient() }
+    @Singleton static func theme() -> Theme { Theme() }
 }
 
-@MainActor
-@Module
-enum SessionModule {
-    /// Candado: si devuelve nil, nada de este subgrafo se construye.
-    @Precondition("Se requiere sesión iniciada")
-    static func session(auth: AuthStore) -> ActiveSession? { auth.current }
+@MainActor @Observable
+@AppCompose(AppModule.self)
+final class AppCompose {
+    let theme: Theme                                   // se resuelve en init(), una sola vez
+}
 
-    /// Vive mientras el scope esté abierto; muere al cerrarlo.
-    @Scoped static func currentUser(session: ActiveSession, api: any ApiClient) -> CurrentUser {
-        CurrentUser(session: session, api: api)
+// Raíz: lo publica. Vista: lo lee. Ninguna de las dos sabe de DI.
+RootView().environment(compose.theme)
+struct SettingsView: View { @Environment(Theme.self) private var theme }
+```
+
+### `@Scoped`: vive y muere con su scope
+
+```swift
+@MainActor @Module
+enum SessionModule {
+    @Scoped static func currentUser(api: any ApiClient) -> CurrentUser { CurrentUser(api: api) }
+}
+
+@AppCompose(AppModule.self)
+final class AppCompose {
+    @Compose(SessionModule.self)
+    struct Session {
+        let currentUser: CurrentUser                   // una por apertura del scope
     }
+}
+
+// Raíz: abre, publica, y al cambiar de cuenta cierra y reabre. La instancia anterior muere.
+var session = try compose.openSession()
+RootView().environment(session.currentUser)
+session.close(); session = try compose.openSession()
+```
+
+Si el objeto tiene un socket, un timer o un stream, conforma `ScopeDisposable`: `close()` llama a
+`onScopeTeardown()` antes de soltarlo.
+
+### `@Provider`: una instancia por petición
+
+```swift
+@MainActor @Module
+enum SessionModule {
+    @Provider static func composer(user: CurrentUser) -> PostComposerViewModel { PostComposerViewModel(user: user) }
+}
+
+@Compose(SessionModule.self)
+struct Session {
+    let currentUser: CurrentUser
+    let postComposer: Provider<PostComposerViewModel>  // fábrica, no instancia
+}
+
+// Quien abre la pantalla construye el view model en ese momento, con sus dependencias del scope.
+.sheet(isPresented: $showComposer) {
+    PostComposerView(viewModel: try! session.postComposer())   // try! solo si el subgrafo no tiene @Precondition
 }
 ```
 
-| Decorador | Vive | Úsalo para |
-|---|---|---|
-| `@Singleton` | Toda la app | Tema, preferencias, cliente HTTP base |
-| `@Scoped` | Mientras el scope esté abierto | Todo lo que depende de la cuenta, del flujo, de la pantalla |
-| `@Provider` | Una instancia por petición | View models y casos de uso sin estado compartido |
-| `@Precondition` | Se evalúa antes de construir | Sesión, permisos, país activo |
-| `@BusinessRule` | Se reevalúa al consultar | Feature flags, variantes A/B |
+`Provider<T>` es el `Provider<T>` de Dagger: quien lo recibe no conoce el grafo, solo puede pedir `T`.
+Los `@Inject` también se piden así: `let timeline: Provider<TimelineViewModel>`, sin registrarlos en
+ningún módulo.
 
-Los parámetros de una función son sus dependencias: el grafo las resuelve. **El módulo crea el objeto.**
-Si devuelve `Algo.shared`, el grafo es decorativo (ver §5).
+### `@Precondition`: candado del subgrafo
+
+```swift
+@MainActor @Module
+enum SessionModule {
+    @Precondition("Se requiere sesión iniciada")
+    static func session(auth: AuthStore) -> ActiveSession? { auth.current }   // nil = bloqueado
+
+    @Scoped static func inbox(session: ActiveSession) -> Inbox { Inbox(session: session) }   // la exige
+}
+
+@Compose(SessionModule.self)
+struct Session {
+    let session: ActiveSession     // init(parent:) lanza unmetPrecondition si es nil, sin construir nada
+    let inbox: Inbox
+}
+
+// Raíz o coordinador: el único sitio que decide qué hacer cuando falta.
+do {
+    session = try compose.openSession()
+} catch GraphError.unmetPrecondition(_, let reason) {
+    router.showLogin(reason: reason)                   // estado: navegación
+}
+```
+
+Si no quieres bloquear todo el scope, no pongas la precondición en el `@Compose` de sesión: ponla en el
+`@Compose` del flujo que la necesita (`Inbox`), y el resto de la sesión abre igual.
+
+### `@BusinessRule`: se reevalúa al consultar
+
+```swift
+@MainActor @Module
+enum AppModule {
+    @Singleton static func flags() -> FeatureFlags { FeatureFlags() }
+
+    @BusinessRule static func layout(flags: FeatureFlags) -> any LayoutStrategy {
+        flags.bento ? BentoLayout() : ClassicLayout()
+    }
+}
+
+@AppCompose(AppModule.self)
+final class AppCompose {
+    let layout: Provider<any LayoutStrategy>           // cada llamada vuelve a mirar el flag
+}
+
+// La vista pide la variante cuando la va a usar; si el flag cambió, cambia la variante. Sin reabrir nada.
+let strategy = try compose.layout()
+```
+
+Con `let layout: any LayoutStrategy` la variante quedaría fijada al arrancar la app.
 
 ---
 
@@ -114,7 +214,8 @@ final class AppCompose {
     @Compose(SessionModule.self)
     struct Session {
         let session: ActiveSession            // @Precondition: init lanza si no hay sesión, sin construir nada
-        let currentUser: CurrentUser          // @Scoped
+        let currentUser: CurrentUser          // @Scoped: una por scope
+        let timeline: Provider<TimelineViewModel>   // @Provider / @Inject: una por llamada
 
         @Compose(EditorModule.self)           // sub-sub-scope: session.openEditor()
         struct Editor { let store: EditorStore }
@@ -123,7 +224,7 @@ final class AppCompose {
 ```
 
 Generado por ti: nada. Generado por la macro: `graph`, `init() throws`, `close()`, `openSession()`,
-y dentro de `Session`: `init(parent:) throws`, `close()`, `openEditor()`.
+y dentro de `Session`: `init(parent:) throws`, `close()`, `openEditor()`, y `timeline` como fábrica.
 
 ---
 
@@ -264,22 +365,83 @@ Todo lo que dependa de la cuenta va `@Scoped` bajo un `@Compose` que se cierra a
 dependencia real no tiene valor inicial pero el tipo no la expone en su `init`, no es del grafo: es
 estado. Déjala con valor inicial.
 
+### 5.11 Un `@Provider` o un `@BusinessRule` como `let` en el compositor
+
+```swift
+// ❌ Compila. Se resuelve una vez al abrir el scope: ya no es "una por petición" ni "se reevalúa".
+let composer: PostComposerViewModel
+let layout: any LayoutStrategy
+```
+
+Declara `Provider<T>`. El `let` normal es para `@Singleton` y `@Scoped`.
+
 ---
 
-## 6. Valídalo antes de compilar
+## 6. Valídalo antes de compilar: `dagger-graph` y su linter
+
+Dos cosas se comprueban en tiempo de compilación, por dos vías:
+
+| Vía | Qué ve | Cómo lo muestra |
+|---|---|---|
+| Las macros (`@Inject`, `@Module`) | Solo la declaración donde están | Diagnóstico del compilador, sin configurar nada: clase no `final` (error), `.init(` como valor por defecto (warning), `.shared` en un módulo (warning) |
+| `dagger-graph` (CLI o build plugin) | Todos los archivos | `archivo:línea:col: error|warning:` en cada build; Xcode lo pinta en el código y un error tumba el build |
+
+### El grafo
 
 ```bash
 dagger-graph Sources            # bindings faltantes, ciclos, scopes nunca abiertos; exit 1 si hay errores
 ```
 
-O como build plugin (`+24 ms` por build):
+Valida **por raíz de composición**: cada `@AppCompose(M.self)` es una raíz y cada `@Compose(S.self)` un
+hijo, igual que `ScopeContainer.root(modules:)` y `makeChildScope(for:)`. Un `let` que ningún módulo de
+ese nivel provea, o que viva en un scope que ese nivel nunca abre, es un error en la línea del `let`.
+
+### El linter
+
+```bash
+dagger-graph --lint Sources     # además, las reglas de §5
+```
+
+O, para que corra siempre (CLI y build plugin), un `dagger-graph.json` en el paquete o en un directorio
+padre:
+
+```json
+{
+  "lint": true,
+  "rootFiles": ["App/Main/", "App/Router/AppRegistry.swift"],
+  "rules": { "container-in-feature": "error", "dynamic-registration": "off" }
+}
+```
+
+- `rootFiles`: fragmentos de ruta que cuentan como raíz o coordinador (donde sí va el `catch` de
+  `GraphError`). Los archivos que declaran un `@AppCompose` / `@Compose` lo son siempre.
+- `rules`: `"error"`, `"warning"` u `"off"` por regla. Los tests (`/Tests/`, `*Tests.swift`) no se lintan.
+- Silenciar un sitio: `// dagger-graph: allow <regla> — motivo` en la misma línea o en la anterior.
+  `// dagger-graph: allow` sin regla silencia todas las de esa línea.
+
+| Regla | Sección | Por defecto |
+|---|---|---|
+| `resolve-outside-compositor` | 5.1 | error |
+| `container-in-feature` | 5.2 | warning |
+| `module-static-resolve` | 5.3 | error |
+| `dynamic-registration` | 5.4 | warning |
+| `optional-try` | 5.5 | error |
+| `catch-outside-root` | 5.6 | warning |
+| `shared-in-module` | 5.7 | warning |
+| `static-compositor` | 5.8 | error |
+| `inject-non-final`, `inject-dot-init` | 5.10 | error, warning |
+| `provider-as-let`, `let-as-provider` | 5.11 | error, warning |
+
+5.9 (`@Singleton` que depende de un scope hijo) la detecta la validación del grafo, con o sin linter.
+
+### Como build plugin
 
 ```swift
 .target(name: "App", plugins: [.plugin(name: "DaggerGraphBuildPlugin", package: "DaggerGraph")])
 ```
 
-`dagger-graph` valida por raíz cuando encuentra `ScopeContainer.root(modules:)` literales. Hoy **no**
-reconoce `@AppCompose(M.self)` como raíz (pendiente): valida el grafo en global.
++24 a 27 ms por build. El plugin lee el mismo `dagger-graph.json`, así que el linter corre en cada build
+sin flags.
 
 ---
 
@@ -290,5 +452,6 @@ reconoce `@AppCompose(M.self)` como raíz (pendiente): valida el grafo en global
 - [ ] Ningún `try?` sobre el grafo.
 - [ ] `catch GraphError` solo en la raíz o el coordinador.
 - [ ] Nada que dependa de la cuenta o del flujo es `@Singleton`.
+- [ ] Ningún `@Provider` ni `@BusinessRule` declarado como `let` en un compositor (van como `Provider<T>`).
 - [ ] Los módulos crean sus objetos (sin `.shared`), salvo que esté documentado como paso de migración.
-- [ ] `dagger-graph` en verde en CI.
+- [ ] `dagger-graph --lint` en verde en CI (o `"lint": true` en `dagger-graph.json`).

@@ -732,6 +732,8 @@ session = try compose.openAccountSession()
 
 Qué genera cada macro: `graph` (el `ScopeContainer` de ese nivel), `init() throws` en la raíz o
 `init(parent:) throws` en un hijo, `close()` y un `openX() throws -> X` por cada tipo anidado con `@Compose`.
+Un `let x: T` se resuelve una vez al abrir el nivel (`@Singleton`, `@Scoped`, `@Precondition`); un
+`let x: Provider<T>` es una fábrica que resuelve en cada llamada (`@Provider`, `@BusinessRule`, `@Inject`).
 Las propiedades con valor inicial no se piden al grafo. Un `init` propio desactiva el generado.
 
 Es el equivalente de `@Component` / `@Subcomponent` de Dagger: tú escribes la interfaz, la herramienta el
@@ -1041,6 +1043,12 @@ dagger-graph manifest --name ServicesKit --out ServicesKit.json Sources/Services
 dagger-graph --manifest ServicesKit.json Sources/Features
 ```
 
+Linter de prácticas (`docs/QUICKSTART.md` §5): `dagger-graph --lint <dir>`, o `dagger-graph.json` con
+`"lint": true` para que corra también desde el build plugin. Once reglas con id, severidad configurable y
+supresión inline (`// dagger-graph: allow <regla>`); `@AppCompose` / `@Compose` cuentan como raíces de
+composición en la validación por raíz. Detalle y tabla de reglas en el
+[Quick Start §6](./docs/QUICKSTART.md#6-valídalo-antes-de-compilar-dagger-graph-y-su-linter).
+
 Build plugin (valida en cada build; +24–27 ms por build medido en SampleProyect):
 
 ```swift
@@ -1094,6 +1102,9 @@ Guía completa con ejemplo: [`docs/COORDINATOR.md`](./docs/COORDINATOR.md).
 **Nuevo**
 - `GraphError.isProgrammerError`, `ScopeContainer.programmerErrorPolicy`.
 - `@AppCompose(Module.self)` / `@Compose(Scope.self)`: compositor raíz con resolución jerárquica (§2.7).
+- `Provider<T>` para `@Provider` / `@BusinessRule` dentro de un compositor (§2.7).
+- `dagger-graph --lint` y `dagger-graph.json`: linter de prácticas (Quick Start §5–6); `@AppCompose` / `@Compose` como raíces.
+- Las macros avisan: `@Inject` en clase no `final` (error), `.init(` como default (warning), `.shared` en `@Module` (warning).
 - `dagger-graph`: validación por raíz, `scopeNotActive` estático, build plugin, `generate`, tests de humo, manifiestos.
 
 ---

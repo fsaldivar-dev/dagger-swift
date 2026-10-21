@@ -172,4 +172,47 @@ struct MacroExpansionTests {
         """)
         #expect((e.diagnostics.first?["message"] as? String ?? "").contains("necesita un tipo de retorno"))
     }
+
+    // MARK: - Diagnósticos de prácticas (Quick Start §5)
+
+    @Test("5.10: @Inject en una clase no final es un error; `.init(` como default, un warning")
+    func injectDiagnostics() {
+        let e = expand("InjectMacro", attribute: "@Inject", decl: """
+        @Inject
+        class NotFinal {
+            let dep: Dep
+            let helper: Helper = .init()
+        }
+        """)
+        let severities = e.diagnostics.compactMap { $0["severity"] as? String }
+        #expect(severities.contains("error"))
+        #expect(severities.contains("warning"))
+        #expect(e.diagnostics.contains { ($0["message"] as? String)?.contains("final") == true })
+        #expect(e.diagnostics.contains { ($0["message"] as? String)?.contains(".init(") == true })
+
+        let ok = expand("InjectMacro", attribute: "@Inject", decl: """
+        @Inject
+        final class Fine {
+            let dep: Dep
+            let helper = Helper()
+        }
+        """)
+        #expect(ok.diagnostics.isEmpty)
+    }
+
+    @Test("5.7: @Module que devuelve .shared avisa; con `// dagger-graph: allow shared-in-module` calla")
+    func moduleSharedDiagnostics() {
+        let e = expand("ModuleMacro", attribute: "@Module", decl: """
+        @Module
+        enum AppModule {
+            @Singleton static func theme() -> Theme { .shared }
+            @Singleton static func prefs() -> Prefs { Prefs.shared }  // dagger-graph: allow shared-in-module
+            @Singleton static func api() -> Api { Api() }
+        }
+        """)
+        let warnings = e.diagnostics.filter { ($0["severity"] as? String) == "warning" }
+        #expect(warnings.count == 1)
+        #expect((warnings.first?["message"] as? String)?.contains("theme()") == true)
+        #expect(e.source.contains("provideSingleton"))
+    }
 }

@@ -44,9 +44,11 @@ enum DeclaredTypes {
 }
 
 struct CacheFile: Codable {
-    static let currentVersion = 6
+    static let currentVersion = 8
     var version = CacheFile.currentVersion
     var roots: [String] = []
+    /// Lint activo y su configuración: si cambian, los diagnósticos cacheados no valen.
+    var lint: String = ""
     var entries: [String: CacheEntry] = [:]
     var diagnostics: [Diagnostic]?
 }
@@ -92,7 +94,9 @@ final class Clock {
 
 @main
 struct DaggerGraphCommand {
-    static let markers: [Data] = ["@Inject", "@Module", "bindInstance(", ".provide", "register(service:", ".resolve("].map { Data($0.utf8) }
+    static let markers: [Data] = ["@Inject", "@Module", "@AppCompose", "@Compose", "bindInstance(", ".provide", "register(service:", ".resolve("].map { Data($0.utf8) }
+    /// Con lint activo también se parsean los archivos que solo tocan estas reglas (5.2, 5.5, 5.6, 5.8).
+    static let lintMarkers: [Data] = ["ScopeContainer", "GraphError", "try?", "static let", "static var"].map { Data($0.utf8) }
     static let skipDirs: Set<String> = ["DerivedData", "Pods", "Carthage", "node_modules"]
 
     struct ScannedFile: Sendable {
@@ -108,6 +112,8 @@ struct DaggerGraphCommand {
         if generateMode || manifestMode { args.removeFirst() }
         let timings = args.contains("--timings")
         let useCache = !args.contains("--no-cache")
+        let lintFlag = args.contains("--lint")
+        args.removeAll { $0 == "--timings" || $0 == "--no-cache" || $0 == "--lint" }
         func option(_ name: String) -> String? {
             guard let i = args.firstIndex(of: name), i + 1 < args.count else { return nil }
             let value = args[i + 1]
@@ -136,11 +142,28 @@ struct DaggerGraphCommand {
             FileHandle.standardError.write(Data("uso: dagger-graph generate --out <dir> [--roots-in <prefijo>] [--target-module M] [--import M]... <dir>...\n".utf8))
             exit(2)
         }
+        let lintConfigPath = option("--lint-config")
         let roots = args.filter { !$0.hasPrefix("--") }
         guard !roots.isEmpty else {
-            FileHandle.standardError.write(Data("uso: dagger-graph [--timings] [--no-cache] [--cache <ruta>] [--output-swift <ruta>] <dir> [<dir> ...]\n".utf8))
+            FileHandle.standardError.write(Data("uso: dagger-graph [--timings] [--no-cache] [--lint] [--lint-config <dagger-graph.json>] [--cache <ruta>] [--output-swift <ruta>] <dir> [<dir> ...]\n".utf8))
             exit(2)
         }
+        // Lint: `--lint`, o un `dagger-graph.json` con `"lint": true` en los directorios analizados o sus padres.
+        var lintConfig: LintConfig?
+        if let lintConfigPath {
+            guard let data = FileManager.default.contents(atPath: lintConfigPath),
+                  let config = try? JSONDecoder().decode(LintConfig.self, from: data) else {
+                FileHandle.standardError.write(Data("dagger-graph: no se pudo leer \(lintConfigPath)\n".utf8))
+                exit(2)
+            }
+            lintConfig = config
+        } else if let (config, _) = LintConfig.discover(near: roots) {
+            lintConfig = config
+        }
+        if lintFlag, lintConfig == nil { lintConfig = LintConfig() }
+        if let c = lintConfig, !(lintFlag || c.lint) { lintConfig = nil }
+        let lintKey = lintConfig.flatMap { try? JSONEncoder.sorted.encode($0) }.map { String(decoding: $0, as: UTF8.self) } ?? ""
+        let activeMarkers = lintConfig == nil ? markers : markers + lintMarkers
 
         let clock = Clock()
 
@@ -153,10 +176,11 @@ struct DaggerGraphCommand {
         var cache = CacheFile()
         if useCache, let data = FileManager.default.contents(atPath: cachePath),
            let decoded = try? JSONDecoder().decode(CacheFile.self, from: data),
-           decoded.version == CacheFile.currentVersion, decoded.roots == roots {
+           decoded.version == CacheFile.currentVersion, decoded.roots == roots, decoded.lint == lintKey {
             cache = decoded
         }
         cache.roots = roots
+        cache.lint = lintKey
 
         let unchanged = cache.diagnostics != nil
             && cache.entries.count == files.count
@@ -189,7 +213,7 @@ struct DaggerGraphCommand {
                     }
                     // El código que genera `dagger-graph generate` es derivado: no se vuelve a validar.
                     let generated = data.starts(with: Data(GeneratedFile.marker.utf8))
-                    let relevant = !generated && markers.contains { data.range(of: $0) != nil }
+                    let relevant = !generated && activeMarkers.contains { data.range(of: $0) != nil }
                     let entry = CacheEntry(
                         mtime: f.mtime, size: f.size, hash: hash, relevant: relevant, facts: nil,
                         declared: generateMode ? DeclaredTypes.scan(data) : []
@@ -258,6 +282,7 @@ struct DaggerGraphCommand {
         }
         var validator = Validator(facts: allFacts)
         validator.extraImports = Set(extraImports)
+        validator.lintConfig = lintConfig
         // Índice tipo → archivo que lo declara (para imports automáticos del código generado).
         if generateMode {
             for (path, e) in entries.sorted(by: { $0.key < $1.key }) {

@@ -39,6 +39,10 @@ struct Validator {
     let roots: [(file: String, root: RootFact, parent: Int?)]
     var locatorRegistrations: [(file: String, use: LocatorUse)] = []
     var locatorRequests: [(file: String, use: LocatorUse)] = []
+    var composes: [(file: String, fact: ComposeFact)] = []
+    var lintSites: [(file: String, site: LintSite)] = []
+    /// Reglas del Quick Start §5; `nil` = lint apagado.
+    var lintConfig: LintConfig?
     /// Módulos extra a importar en el código generado (`generate --import M`).
     var extraImports: Set<String> = []
     /// Tipo → archivo que lo declara (solo en `generate`).
@@ -63,6 +67,8 @@ struct Validator {
         for (file, f) in facts {
             locatorRegistrations += f.locatorRegistrations.map { (file, $0) }
             locatorRequests += f.locatorRequests.map { (file, $0) }
+            composes += f.composes.map { (file, $0) }
+            lintSites += f.lint.map { (file, $0) }
         }
         self.nodes = nodes
         self.dynamic = dynamic
@@ -94,6 +100,7 @@ struct Validator {
         groups.formUnion(scopeViolations().map { [$0] })
         groups.formUnion(rootDiagnostics())
         groups.formUnion(locatorDiagnostics())
+        if let lintConfig { groups.formUnion(lintDiagnostics(config: lintConfig)) }
         return groups.sorted { $0[0] < $1[0] }.flatMap { $0 }
     }
 
@@ -378,11 +385,12 @@ extension Validator {
             }
             // Tipos pedidos explícitamente: existencia + scope abierto.
             let open = openScopes(of: i)
+            let requester = root.text.hasPrefix("@") ? "el compositor" : "el test"
             for req in root.requested {
                 let reqSeverity: Diagnostic.Severity = (req.expectsFailure || expectsFailure) ? .note : .error
                 let suffix = req.expectsFailure ? " (el test lo espera: #expect(throws:))" : ""
                 if !req.expectsFailure {
-                    check(req.type, requiredBy: "el test", at: entry.file, req.loc)
+                    check(req.type, requiredBy: requester, at: entry.file, req.loc)
                 } else if provider(req.type) == nil, !provided.contains(req.type) {
                     out.append([Diagnostic(
                         file: entry.file, loc: req.loc, severity: .note,

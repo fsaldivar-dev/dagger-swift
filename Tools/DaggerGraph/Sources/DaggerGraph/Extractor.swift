@@ -14,12 +14,29 @@ import SwiftSyntax
 
 final class FactExtractor: SyntaxVisitor {
     private let converter: SourceLocationConverter
+    private let lines: [String]
     private var typeStack: [String] = []
+    /// Paralelo a `typeStack`: `true` si ese nivel es un `@AppCompose` / `@Compose`.
+    private var composeMarks: [Bool] = []
+    /// Compositores abiertos (nombre calificado) y el índice de su `RootFact`, para anidar `@Compose`.
+    private var composeNames: [String] = []
+    private var composeRootIndex: [Int] = []
     private(set) var facts = FileFacts()
 
     init(tree: SourceFileSyntax, fileName: String) {
         self.converter = SourceLocationConverter(fileName: fileName, tree: tree)
+        self.lines = tree.description.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         super.init(viewMode: .sourceAccurate)
+    }
+
+    private var inCompositor: Bool { composeMarks.contains(true) }
+
+    private func popType() {
+        typeStack.removeLast()
+        if composeMarks.removeLast() {
+            composeNames.removeLast()
+            composeRootIndex.removeLast()
+        }
     }
 
     static func extract(from tree: SourceFileSyntax, fileName: String) -> FileFacts {
@@ -38,28 +55,29 @@ final class FactExtractor: SyntaxVisitor {
     override func visit(_ node: StructDeclSyntax) -> SyntaxVisitorContinueKind {
         handleType(name: node.name.text, attributes: node.attributes, members: node.memberBlock, node: node)
     }
-    override func visitPost(_ node: StructDeclSyntax) { typeStack.removeLast() }
+    override func visitPost(_ node: StructDeclSyntax) { popType() }
 
     override func visit(_ node: ClassDeclSyntax) -> SyntaxVisitorContinueKind {
         handleType(name: node.name.text, attributes: node.attributes, members: node.memberBlock, node: node)
     }
-    override func visitPost(_ node: ClassDeclSyntax) { typeStack.removeLast() }
+    override func visitPost(_ node: ClassDeclSyntax) { popType() }
 
     override func visit(_ node: ActorDeclSyntax) -> SyntaxVisitorContinueKind {
         handleType(name: node.name.text, attributes: node.attributes, members: node.memberBlock, node: node)
     }
-    override func visitPost(_ node: ActorDeclSyntax) { typeStack.removeLast() }
+    override func visitPost(_ node: ActorDeclSyntax) { popType() }
 
     override func visit(_ node: EnumDeclSyntax) -> SyntaxVisitorContinueKind {
         handleType(name: node.name.text, attributes: node.attributes, members: node.memberBlock, node: node)
     }
-    override func visitPost(_ node: EnumDeclSyntax) { typeStack.removeLast() }
+    override func visitPost(_ node: EnumDeclSyntax) { popType() }
 
     override func visit(_ node: ExtensionDeclSyntax) -> SyntaxVisitorContinueKind {
         typeStack.append(node.extendedType.trimmedDescription)
+        composeMarks.append(false)
         return .visitChildren
     }
-    override func visitPost(_ node: ExtensionDeclSyntax) { typeStack.removeLast() }
+    override func visitPost(_ node: ExtensionDeclSyntax) { popType() }
 
     private func handleType(
         name: String,
@@ -70,7 +88,46 @@ final class FactExtractor: SyntaxVisitor {
         typeStack.append(name)
         let qualified = typeStack.joined(separator: ".")
 
+        // Compositores: @AppCompose(M.self) (raíz) y @Compose(S.self) (scope hijo, anidado en su padre).
+        let appCompose = attribute(named: "AppCompose", in: attributes)
+        let compose = appCompose ?? attribute(named: "Compose", in: attributes)
+        composeMarks.append(compose != nil)
+        if let compose,
+           let target = compose.arguments?.as(LabeledExprListSyntax.self)?.first
+               .map({ TypeName.stripSelf($0.expression.trimmedDescription) }) {
+            let isApp = appCompose != nil
+            let composeMembers = composeMembers(members)
+            facts.composes.append(ComposeFact(
+                name: qualified, kind: isApp ? .app : .scope, target: target,
+                parent: composeNames.last, members: composeMembers, loc: loc(node)
+            ))
+            var root = RootFact(
+                kind: isApp ? .root : .childScope, modules: [target],
+                parent: isApp ? nil : composeRootIndex.last, loc: loc(node),
+                text: "\(isApp ? "@AppCompose" : "@Compose")(\(target).self) \(name)"
+            )
+            root.requested = composeMembers.map { RootFact.Requested(type: $0.type, loc: $0.loc) }
+            facts.roots.append(root)
+            composeNames.append(qualified)
+            composeRootIndex.append(facts.roots.count - 1)
+        }
+
         if let inject = attribute(named: "Inject", in: attributes) {
+            // Lint 5.10: @Inject genera `Self(...)`, que en una clase no final exige `required init`.
+            if let cls = Syntax(node).as(ClassDeclSyntax.self),
+               !cls.modifiers.contains(where: { $0.name.text == "final" }) {
+                lint(.injectNonFinal, cls.name, type: qualified)
+            }
+            // Lint 5.10: `let x: T = .init()` confunde a la macro con el init del tipo.
+            for member in members.members {
+                guard let v = member.decl.as(VariableDeclSyntax.self) else { continue }
+                for b in v.bindings {
+                    guard let call = b.initializer?.value.as(FunctionCallExprSyntax.self),
+                          let callee = call.calledExpression.as(MemberAccessExprSyntax.self),
+                          callee.base == nil, callee.declName.baseName.text == "init" else { continue }
+                    lint(.injectDotInit, b, type: qualified)
+                }
+            }
             let scope = labeledArgument("scope", of: inject).map(TypeName.stripSelf)
             facts.bindings.append(
                 Binding(
@@ -95,6 +152,93 @@ final class FactExtractor: SyntaxVisitor {
             facts.modules.append(ModuleFact(name: qualified, scope: moduleScope, includes: includes, loc: loc(node)))
             moduleBindings(members, module: qualified, moduleScope: moduleScope,
                            moduleIsMainActor: attribute(named: "MainActor", in: attributes) != nil)
+        }
+        return .visitChildren
+    }
+
+    // MARK: - Compositores
+
+    /// Los `let` sin valor inicial del compositor; `Provider<T>` se registra como `T` con `isProvider`.
+    private func composeMembers(_ members: MemberBlockSyntax) -> [ComposeFact.Member] {
+        var out: [ComposeFact.Member] = []
+        for member in members.members {
+            guard let v = member.decl.as(VariableDeclSyntax.self) else { continue }
+            if v.modifiers.contains(where: { ["static", "class"].contains($0.name.text) }) { continue }
+            for b in v.bindings {
+                guard let t = b.typeAnnotation?.type, b.initializer == nil, b.accessorBlock == nil else { continue }
+                var type = t
+                var isProvider = false
+                if let id = t.as(IdentifierTypeSyntax.self), id.name.text == "Provider",
+                   let arg = id.genericArgumentClause?.arguments.first {
+                    type = arg.argument; isProvider = true
+                } else if let m = t.as(MemberTypeSyntax.self), m.name.text == "Provider",
+                          let arg = m.genericArgumentClause?.arguments.first {
+                    type = arg.argument; isProvider = true
+                }
+                out.append(ComposeFact.Member(
+                    name: b.pattern.trimmedDescription,
+                    type: TypeName.normalize(type.trimmedDescription),
+                    isProvider: isProvider,
+                    loc: loc(b)
+                ))
+            }
+        }
+        return out
+    }
+
+    // MARK: - Sitios de lint
+
+    private func lint(_ kind: LintSite.Kind, _ node: some SyntaxProtocol, type: String? = nil) {
+        let l = loc(node)
+        let text = node.trimmedDescription.split(separator: "\n").first.map(String.init) ?? ""
+        facts.lint.append(LintSite(
+            kind: kind, text: text, loc: l, inCompositor: inCompositor, type: type,
+            allowed: allowedRules(line: l.line)
+        ))
+    }
+
+    /// `// dagger-graph: allow regla-a regla-b — motivo` en la misma línea o en la anterior.
+    /// Devuelve las reglas nombradas (`[]` = todas); `nil` si no hay comentario.
+    private func allowedRules(line: Int) -> [String]? {
+        for i in [line - 1, line - 2] where i >= 0 && i < lines.count {
+            guard let range = lines[i].range(of: "dagger-graph: allow") else { continue }
+            let rest = lines[i][range.upperBound...]
+            var rules: [String] = []
+            for token in rest.split(whereSeparator: { $0.isWhitespace }) {
+                let t = String(token)
+                // Fin de la lista: un separador o el inicio de una explicación.
+                if t.hasPrefix("—") || t.hasPrefix("-") || t.hasPrefix("//") || t.hasPrefix("(") || t.hasPrefix(":") { break }
+                guard t.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" || $0 == "." }) else { break }
+                rules.append(t)
+            }
+            return rules
+        }
+        return nil
+    }
+
+    /// 5.5: `try? x.resolve(...)` / `try? compose.openX()`.
+    override func visit(_ node: TryExprSyntax) -> SyntaxVisitorContinueKind {
+        if node.questionOrExclamationMark?.text == "?" {
+            let text = node.expression.trimmedDescription
+            if text.contains(".resolve(") || text.range(of: #"\.open[A-Z]\w*\("#, options: .regularExpression) != nil {
+                lint(.optionalTry, node)
+            }
+        }
+        return .visitChildren
+    }
+
+    /// 5.6: `catch GraphError…` / `catch let e as GraphError`.
+    override func visit(_ node: CatchClauseSyntax) -> SyntaxVisitorContinueKind {
+        if node.catchItems.trimmedDescription.contains("GraphError") {
+            lint(.graphErrorCatch, node.catchKeyword)
+        }
+        return .visitChildren
+    }
+
+    /// 5.2: `ScopeContainer` como parámetro.
+    override func visit(_ node: FunctionParameterSyntax) -> SyntaxVisitorContinueKind {
+        if TypeName.normalize(node.type.trimmedDescription).hasSuffix("ScopeContainer") {
+            lint(.containerUse, node, type: "ScopeContainer")
         }
         return .visitChildren
     }
@@ -167,6 +311,13 @@ final class FactExtractor: SyntaxVisitor {
                 continue
             }
 
+            // Lint 5.7: `@Singleton static func theme() -> Theme { .shared }`: el grafo no crea nada.
+            if kind == .singleton || kind == .scoped,
+               let statements = fn.body?.statements, statements.count == 1,
+               let only = statements.first?.item.trimmedDescription,
+               only.range(of: #"^(try\s+)?\.?(\w+\.)*shared$"#, options: .regularExpression) != nil {
+                lint(.sharedReturn, fn.name, type: "\(module).\(fn.name.text)()")
+            }
             let reason = attribute(named: "Precondition", in: attrs)?.arguments?.as(LabeledExprListSyntax.self)?.first?
                 .expression.as(StringLiteralExprSyntax.self)?.representedLiteralValue
             var provides = TypeName.normalize(ret.trimmedDescription)
@@ -233,7 +384,19 @@ final class FactExtractor: SyntaxVisitor {
     }
 
     override func visitPost(_ node: VariableDeclSyntax) {
+        let isStatic = node.modifiers.contains(where: { ["static", "class"].contains($0.name.text) })
         for binding in node.bindings {
+            // Lint 5.2: `let graph: ScopeContainer` fuera de un compositor.
+            if let t = binding.typeAnnotation?.type,
+               TypeName.normalize(t.trimmedDescription).hasSuffix("ScopeContainer") {
+                lint(.containerUse, binding, type: "ScopeContainer")
+            }
+            // Lint 5.8: `static let compose = (try!)? AppCompose()`: el validador comprueba que sea un compositor.
+            if isStatic, let value = binding.initializer?.value, let call = Self.unwrapCall(value),
+               let callee = call.calledExpression.as(DeclReferenceExprSyntax.self),
+               callee.baseName.text.first?.isUppercase == true {
+                lint(.staticTypeInit, binding, type: callee.baseName.text)
+            }
             guard let name = binding.pattern.as(IdentifierPatternSyntax.self)?.identifier.text,
                   let value = binding.initializer?.value,
                   let call = Self.unwrapCall(value),
@@ -304,6 +467,24 @@ final class FactExtractor: SyntaxVisitor {
 
     override func visitPost(_ node: FunctionCallExprSyntax) {
         if recordLocatorUse(node) { return }
+        // Lint 5.1 / 5.3: `.resolve(T.self)` (argumento tipo, sin etiqueta) o `.resolve()` sobre un receptor
+        // que parece un contenedor. `Color.resolve(in:)` y similares (argumento etiquetado) no cuentan.
+        if let member = node.calledExpression.as(MemberAccessExprSyntax.self),
+           member.declName.baseName.text == "resolve",
+           !(member.base?.trimmedDescription.hasSuffix(".shared") ?? false) {
+            let base = member.base?.trimmedDescription ?? ""
+            let first = node.arguments.first
+            let typeArgument = first.map { $0.label == nil && $0.expression.trimmedDescription.hasSuffix(".self") } ?? false
+            let containerReceiver = ["graph", "container", "scope"].contains { base.lowercased().hasSuffix($0) }
+            if typeArgument || (first == nil && containerReceiver) {
+                let argType = first.map { TypeName.stripSelf($0.expression.trimmedDescription) }
+                if base.first?.isUppercase == true, !base.contains("(") {
+                    lint(.moduleStaticResolve, node, type: TypeName.stripSelf(base))
+                } else {
+                    lint(.resolveCall, node, type: argType)
+                }
+            }
+        }
         if let root = rootFact(for: node) {
             facts.roots.append(root)
             rootIndexByCall[node.id] = facts.roots.count - 1
@@ -465,6 +646,7 @@ final class FactExtractor: SyntaxVisitor {
     private static func unwrapCall(_ expr: ExprSyntax) -> FunctionCallExprSyntax? {
         if let call = expr.as(FunctionCallExprSyntax.self) { return call }
         if let t = expr.as(TryExprSyntax.self) { return unwrapCall(t.expression) }
+        if let f = expr.as(ForceUnwrapExprSyntax.self) { return unwrapCall(f.expression) }
         if let a = expr.as(AwaitExprSyntax.self) { return unwrapCall(a.expression) }
         return nil
     }

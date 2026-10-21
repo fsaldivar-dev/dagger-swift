@@ -85,8 +85,9 @@ struct DaggerSwiftMacrosPlugin {
     nonisolated(unsafe) private static var pendingDiagnostics: [[String: Any]] = []
     nonisolated(unsafe) private static var currentDecl: (source: String, fileName: String, offset: Int)?
 
-    /// Emite un error del compilador apuntando a `needle` dentro de la declaración (o a su inicio).
-    static func diagnose(_ message: String, at needle: String?) {
+    /// Emite un diagnóstico del compilador (error por defecto) apuntando a `needle` dentro de la
+    /// declaración (o a su inicio).
+    static func diagnose(_ message: String, at needle: String?, severity: String = "error") {
         guard let decl = currentDecl else { return }
         var offset = decl.offset
         if let needle, let range = decl.source.range(of: needle) {
@@ -94,7 +95,7 @@ struct DaggerSwiftMacrosPlugin {
         }
         pendingDiagnostics.append([
             "message": message,
-            "severity": "error",
+            "severity": severity,
             "position": ["fileName": decl.fileName, "offset": offset],
             "highlights": [] as [Any],
             "notes": [] as [Any],
@@ -279,6 +280,7 @@ struct DaggerSwiftMacrosPlugin {
         let moduleHeader = clean.firstIndex(of: "{").map { String(clean[..<$0]) } ?? clean
         let moduleIsMainActor = moduleHeader.contains("@MainActor")
         let functions = parseModuleFunctions(from: clean, moduleIsMainActor: moduleIsMainActor)
+        diagnoseSharedReturns(clean: clean, raw: declSource)
 
         var lines: [String] = []
         lines.append("nonisolated public static let moduleVersion: String = \"\(moduleVersion)\"")
@@ -378,6 +380,24 @@ struct DaggerSwiftMacrosPlugin {
         return lines.joined(separator: "\n")
     }
 
+    /// Quick Start §5.7: `@Singleton static func theme() -> Theme { .shared }` registra un objeto que se crea
+    /// solo; el grafo queda decorativo. Warning, silenciable con `// dagger-graph: allow shared-in-module`
+    /// en la línea de la función (paso de migración).
+    private static func diagnoseSharedReturns(clean: String, raw: String) {
+        let pattern = #"func\s+(\w+)\s*\([^)]*\)\s*->\s*[^{\n]+\{\s*(try\s+)?\.?(\w+\.)*shared\s*\}"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return }
+        let ns = clean as NSString
+        for match in regex.matches(in: clean, range: NSRange(location: 0, length: ns.length)) {
+            let name = ns.substring(with: match.range(at: 1))
+            // La supresión está en el código original (con comentarios), en la línea de esa función.
+            if let fnRange = raw.range(of: "func \(name)(") {
+                let lineEnd = raw[fnRange.upperBound...].firstIndex(of: "\n") ?? raw.endIndex
+                if raw[fnRange.lowerBound..<lineEnd].contains("dagger-graph: allow shared") { continue }
+            }
+            diagnose("@Module: `\(name)()` devuelve `.shared`: el grafo no crea el objeto, solo lo registra (Quick Start §5.7). Vale como paso de migración: // dagger-graph: allow shared-in-module", at: "func \(name)(", severity: "warning")
+        }
+    }
+
     // MARK: - 3. @Inject Macro (Zero-Boilerplate Class/Struct Autowiring)
 
     private static func expandInjectExtension(extendedType: String) -> String? {
@@ -421,6 +441,17 @@ struct DaggerSwiftMacrosPlugin {
         let isClassType = header.contains("class ")
         let isMainActor = header.contains("@MainActor")
         let initModifier = isClassType ? "public convenience init" : "public init"
+        // Quick Start §5.10: `Self(...)` en una clase no final exige `required init`.
+        if isClassType, !header.contains("final ") {
+            diagnose("@Inject: la clase debe ser `final` (la macro construye con `Self(...)`, que en una clase no final exige `required init`)", at: "class ")
+        }
+        // Quick Start §5.10: `let x: T = .init()` se confunde con el init del tipo.
+        if let range = clean.range(of: #"(let|var)\s+\w+\s*:\s*[^=\n]+=\s*\.init\("#, options: .regularExpression) {
+            let snippet = String(clean[range])
+            if let dot = snippet.range(of: ".init(") {
+                diagnose("@Inject: `.init(` como valor por defecto se confunde con el init del tipo; escribe `Tipo(...)`", at: String(snippet[..<dot.upperBound]), severity: "warning")
+            }
+        }
         let resolveArgs = initParams.map { p in
             let label = p.externalLabel == "_" ? "" : "\(p.externalLabel): "
             let typeSelf = p.type.contains(" ") ? "(\(p.type)).self" : "\(p.type).self"
@@ -514,8 +545,14 @@ struct DaggerSwiftMacrosPlugin {
         }
         lines.append("    self.graph = graph")
         for prop in properties {
-            let typeSelf = prop.type.contains(" ") ? "(\(prop.type)).self" : "\(prop.type).self"
-            lines.append("    self.\(prop.name) = try graph.resolve(\(typeSelf))")
+            if let inner = providerInnerType(of: prop.type) {
+                // `Provider<T>`: fábrica; se resuelve en cada llamada (@Provider / @BusinessRule), no al abrir el scope.
+                let innerSelf = inner.contains(" ") ? "(\(inner)).self" : "\(inner).self"
+                lines.append("    self.\(prop.name) = DaggerSwift.Provider { try graph.resolve(\(innerSelf)) }")
+            } else {
+                let typeSelf = prop.type.contains(" ") ? "(\(prop.type)).self" : "\(prop.type).self"
+                lines.append("    self.\(prop.name) = try graph.resolve(\(typeSelf))")
+            }
         }
         lines.append("}")
         lines.append("")
@@ -532,6 +569,15 @@ struct DaggerSwiftMacrosPlugin {
             lines.append("}")
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// `Provider<T>` (o `DaggerSwift.Provider<T>`) → `T`; cualquier otro tipo → nil.
+    private static func providerInnerType(of type: String) -> String? {
+        let t = type.trimmingCharacters(in: .whitespacesAndNewlines)
+        for prefix in ["Provider<", "DaggerSwift.Provider<", "DaggerSwiftCore.Provider<"] where t.hasPrefix(prefix) && t.hasSuffix(">") {
+            return String(t.dropFirst(prefix.count).dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return nil
     }
 
     /// Nombres de los tipos anidados (struct/class) marcados con `@Compose(...)` en el primer nivel del cuerpo.

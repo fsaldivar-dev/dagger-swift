@@ -170,6 +170,7 @@ public macro Inject<S: GraphScope>(scope: S.Type) = #externalMacro(
 /// ```
 /// Genera `graph`, `init() throws` (abre la raíz con el módulo indicado y resuelve cada `let`),
 /// `close()` y un `openX() throws -> X` por cada tipo anidado marcado con `@Compose`.
+/// Un `let x: Provider<T>` se genera como fábrica (resuelve en cada llamada: `@Provider`, `@BusinessRule`).
 /// Las propiedades con valor inicial no se piden al grafo. Un `init` propio desactiva el generado.
 @attached(member, names: arbitrary)
 public macro AppCompose<M: GraphModule>(_ module: M.Type) = #externalMacro(

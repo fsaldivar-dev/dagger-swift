@@ -24,6 +24,12 @@ let package = Package(
             ],
             path: "Sources/DaggerGraph"
         ),
+        // Tests del extractor, el validador y el linter sobre fixtures en memoria.
+        .testTarget(
+            name: "DaggerGraphTests",
+            dependencies: ["DaggerGraph"],
+            path: "Tests/DaggerGraphTests"
+        ),
         // Valida el grafo en cada build (sale en milisegundos por la caché si nada cambió).
         .plugin(
             name: "DaggerGraphBuildPlugin",

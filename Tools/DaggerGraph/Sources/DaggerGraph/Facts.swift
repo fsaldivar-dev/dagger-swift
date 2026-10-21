@@ -117,6 +117,62 @@ struct LocatorUse: Codable, Sendable {
     var text: String
 }
 
+/// Compositor (`@AppCompose(M.self)` raíz, `@Compose(S.self)` scope hijo): un tipo que abre un nivel del
+/// grafo y resuelve sus `let`. Además de este hecho, el extractor registra un `RootFact` por compositor
+/// para que la validación por raíz (bindings faltantes, scopeNotActive) lo cubra igual que a `root(modules:)`.
+struct ComposeFact: Codable, Sendable {
+    enum Kind: String, Codable, Sendable { case app, scope }
+    struct Member: Codable, Sendable {
+        var name: String
+        /// Tipo normalizado; para `Provider<T>` es `T`.
+        var type: String
+        var isProvider: Bool
+        var loc: Loc
+    }
+    var name: String
+    var kind: Kind
+    /// Módulo (raíz) o scope (hijo) que abre.
+    var target: String
+    /// Compositor que lo contiene (`nil` en la raíz).
+    var parent: String?
+    var members: [Member]
+    var loc: Loc
+}
+
+/// Sitio del código relevante para `dagger-graph lint` (las reglas del Quick Start §5).
+struct LintSite: Codable, Sendable {
+    enum Kind: String, Codable, Sendable {
+        /// `x.resolve(T.self)` sobre un contenedor (5.1).
+        case resolveCall
+        /// `Tipo.resolve(T.self)` estático (5.3 si `Tipo` es un @Module).
+        case moduleStaticResolve
+        /// `ScopeContainer` como tipo de parámetro o propiedad (5.2).
+        case containerUse
+        /// `try? …resolve(…)` / `try? …openX()` (5.5).
+        case optionalTry
+        /// `catch … GraphError …` (5.6).
+        case graphErrorCatch
+        /// `@Singleton`/`@Scoped` cuyo cuerpo devuelve `.shared` (5.7).
+        case sharedReturn
+        /// `static let x = Tipo(...)` (5.8 si `Tipo` es un compositor).
+        case staticTypeInit
+        /// `@Inject` sobre una clase no `final` (5.10).
+        case injectNonFinal
+        /// `.init(` como valor por defecto dentro de un tipo `@Inject` (5.10).
+        case injectDotInit
+    }
+    var kind: Kind
+    var text: String
+    var loc: Loc
+    /// Dentro de un tipo `@AppCompose` / `@Compose`.
+    var inCompositor: Bool
+    /// Tipo asociado (el pedido en `resolve`, el receptor estático, el tipo construido…).
+    var type: String?
+    /// `// dagger-graph: allow [regla …]` en la misma línea o en la anterior: `nil` si no hay comentario,
+    /// `[]` si es un `allow` sin reglas (silencia todas), o las reglas nombradas.
+    var allowed: [String]?
+}
+
 struct FileFacts: Codable, Sendable {
     var bindings: [Binding] = []
     var modules: [ModuleFact] = []
@@ -124,6 +180,8 @@ struct FileFacts: Codable, Sendable {
     var roots: [RootFact] = []
     var locatorRegistrations: [LocatorUse] = []
     var locatorRequests: [LocatorUse] = []
+    var composes: [ComposeFact] = []
+    var lint: [LintSite] = []
 }
 
 enum TypeName {
