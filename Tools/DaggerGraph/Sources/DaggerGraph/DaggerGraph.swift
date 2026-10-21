@@ -187,7 +187,9 @@ struct DaggerGraphCommand {
                         var e = old; e.mtime = f.mtime; e.size = f.size
                         return (f, e, nil)
                     }
-                    let relevant = markers.contains { data.range(of: $0) != nil }
+                    // El código que genera `dagger-graph generate` es derivado: no se vuelve a validar.
+                    let generated = data.starts(with: Data(GeneratedFile.marker.utf8))
+                    let relevant = !generated && markers.contains { data.range(of: $0) != nil }
                     let entry = CacheEntry(
                         mtime: f.mtime, size: f.size, hash: hash, relevant: relevant, facts: nil,
                         declared: generateMode ? DeclaredTypes.scan(data) : []

@@ -16,6 +16,8 @@
 import Foundation
 
 struct GeneratedFile {
+    /// Primera línea de todo archivo generado (dagger-graph lo usa para no re-validarlos).
+    static let marker = "// Generado por `dagger-graph generate`."
     let name: String
     let content: String
 }
