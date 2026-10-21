@@ -14,15 +14,15 @@ extension DaggerGraph_NestedAppModule {
         /// Abre el scope hijo `NestedFeatureScope`.
         func makeNestedFeatureScope() -> NestedFeatureScopeGraph { NestedFeatureScopeGraph(parent: self) }
 
-        func nestedHeavyReport() throws -> NestedHeavyReport {
-            try NestedHeavyReport(store: nestedSessionStore())
+        func nestedHeavyReport() -> NestedHeavyReport {
+            NestedHeavyReport(store: nestedSessionStore())
         }
 
         private var _nestedSessionStore: NestedSessionStore?
-        func nestedSessionStore() throws -> NestedSessionStore {
+        func nestedSessionStore() -> NestedSessionStore {
             lock.lock(); defer { lock.unlock() }
             if let cached = _nestedSessionStore { return cached }
-            let value = try NestedAppModule.store(api: parent.nestedApiClient())
+            let value = NestedAppModule.store(api: parent.nestedApiClient())
             _nestedSessionStore = value
             return value
         }

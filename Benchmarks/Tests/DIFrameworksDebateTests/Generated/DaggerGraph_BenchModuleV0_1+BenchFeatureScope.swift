@@ -12,7 +12,7 @@ extension DaggerGraph_BenchModuleV0_1 {
         var lock: NSRecursiveLock { parent.lock }
 
         private var _benchRepositoryProtocol: (any BenchRepositoryProtocol)?
-        func benchRepositoryProtocol() throws -> any BenchRepositoryProtocol {
+        func benchRepositoryProtocol() -> any BenchRepositoryProtocol {
             lock.lock(); defer { lock.unlock() }
             if let cached = _benchRepositoryProtocol { return cached }
             let value = BenchModuleV0_1.repository()
@@ -20,8 +20,8 @@ extension DaggerGraph_BenchModuleV0_1 {
             return value
         }
 
-        func benchUseCase() throws -> BenchUseCase {
-            try BenchUseCase(repository: benchRepositoryProtocol())
+        func benchUseCase() -> BenchUseCase {
+            BenchUseCase(repository: benchRepositoryProtocol())
         }
     }
 }

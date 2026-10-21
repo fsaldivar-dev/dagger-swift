@@ -97,7 +97,7 @@ struct NestedGeneratedGraphTests {
         #expect(NestedApiClient.initCount == 1)
 
         // Otra sesión = otro store; el singleton se comparte.
-        let otherStore = try graph.makeNestedSessionScope().nestedSessionStore()
+        let otherStore = graph.makeNestedSessionScope().nestedSessionStore()
         let distinctSessions = otherStore !== vmA1.report.store
         let sharedApi = otherStore.api === vmA1.report.store.api
         #expect(distinctSessions)

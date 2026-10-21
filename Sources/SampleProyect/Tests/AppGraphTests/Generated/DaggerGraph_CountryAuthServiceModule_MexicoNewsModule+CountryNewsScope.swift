@@ -14,7 +14,7 @@ extension DaggerGraph_CountryAuthServiceModule_MexicoNewsModule {
         init(parent: DaggerGraph_CountryAuthServiceModule_MexicoNewsModule) { self.parent = parent }
 
         private var _countryLocaleProviderProtocol: (any CountryLocaleProviderProtocol)?
-        func countryLocaleProviderProtocol() throws -> any CountryLocaleProviderProtocol {
+        func countryLocaleProviderProtocol() -> any CountryLocaleProviderProtocol {
             if let cached = _countryLocaleProviderProtocol { return cached }
             let value = MexicoNewsModule.localeProvider()
             _countryLocaleProviderProtocol = value
@@ -22,15 +22,15 @@ extension DaggerGraph_CountryAuthServiceModule_MexicoNewsModule {
         }
 
         private var _countryNewsPortalViewModel: CountryNewsPortalViewModel?
-        func countryNewsPortalViewModel() throws -> CountryNewsPortalViewModel {
+        func countryNewsPortalViewModel() -> CountryNewsPortalViewModel {
             if let cached = _countryNewsPortalViewModel { return cached }
-            let value = try CountryNewsPortalViewModel(authRepository: parent.countryAuthRepositoryProtocol())
+            let value = CountryNewsPortalViewModel(authRepository: parent.countryAuthRepositoryProtocol())
             _countryNewsPortalViewModel = value
             return value
         }
 
         private var _countryNewsRepositoryProtocol: (any CountryNewsRepositoryProtocol)?
-        func countryNewsRepositoryProtocol() throws -> any CountryNewsRepositoryProtocol {
+        func countryNewsRepositoryProtocol() -> any CountryNewsRepositoryProtocol {
             if let cached = _countryNewsRepositoryProtocol { return cached }
             let value = MexicoNewsModule.newsRepository()
             _countryNewsRepositoryProtocol = value

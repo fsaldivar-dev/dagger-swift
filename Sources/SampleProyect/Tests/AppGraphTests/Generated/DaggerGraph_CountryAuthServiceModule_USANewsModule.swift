@@ -14,46 +14,46 @@ final class DaggerGraph_CountryAuthServiceModule_USANewsModule {
     /// Abre el scope `CountryNewsScope` (sus `@Scoped` viven mientras viva el objeto devuelto).
     func makeCountryNewsScope() -> CountryNewsScopeGraph { CountryNewsScopeGraph(parent: self) }
 
-    func authSessionRepository() throws -> AuthSessionRepository {
+    func authSessionRepository() -> AuthSessionRepository {
         AuthSessionRepository()
     }
 
-    func authSessionRepositoryV2() throws -> AuthSessionRepositoryV2 {
+    func authSessionRepositoryV2() -> AuthSessionRepositoryV2 {
         AuthSessionRepositoryV2()
     }
 
     func authenticatedCountrySession() throws -> AuthenticatedCountrySession {
-        guard let value = try USANewsModule.validateSession(auth: countryAuthRepositoryProtocol()) else {
+        guard let value = USANewsModule.validateSession(auth: countryAuthRepositoryProtocol()) else {
             throw GraphError.unmetPrecondition(type: String(reflecting: AuthenticatedCountrySession.self), reason: "Active US (🇺🇸) session required")
         }
         return value
     }
 
-    func countryAuthRepositoryImpl() throws -> CountryAuthRepositoryImpl {
+    func countryAuthRepositoryImpl() -> CountryAuthRepositoryImpl {
         CountryAuthRepositoryImpl()
     }
 
     private var _countryAuthRepositoryProtocol: (any CountryAuthRepositoryProtocol)?
-    func countryAuthRepositoryProtocol() throws -> any CountryAuthRepositoryProtocol {
+    func countryAuthRepositoryProtocol() -> any CountryAuthRepositoryProtocol {
         if let cached = _countryAuthRepositoryProtocol { return cached }
         let value = CountryAuthServiceModule.countryAuthRepository()
         _countryAuthRepositoryProtocol = value
         return value
     }
 
-    func fakerGitHubRepository() throws -> FakerGitHubRepository {
+    func fakerGitHubRepository() -> FakerGitHubRepository {
         FakerGitHubRepository()
     }
 
-    func featureFlagRepositoryImpl() throws -> FeatureFlagRepositoryImpl {
+    func featureFlagRepositoryImpl() -> FeatureFlagRepositoryImpl {
         FeatureFlagRepositoryImpl()
     }
 
-    func fintechABFlagsRepositoryImpl() throws -> FintechABFlagsRepositoryImpl {
+    func fintechABFlagsRepositoryImpl() -> FintechABFlagsRepositoryImpl {
         FintechABFlagsRepositoryImpl()
     }
 
-    func liveGitHubRepository() throws -> LiveGitHubRepository {
+    func liveGitHubRepository() -> LiveGitHubRepository {
         LiveGitHubRepository()
     }
 }

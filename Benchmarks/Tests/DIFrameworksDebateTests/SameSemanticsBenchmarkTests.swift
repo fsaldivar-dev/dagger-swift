@@ -36,10 +36,10 @@ struct SameSemanticsBenchmarkTests {
         // B. Código generado
         let graph = DaggerGraph_BenchModuleV1()
         let generatedFeature = graph.makeBenchFeatureScope()
-        _ = try generatedFeature.benchUseCase()
+        _ = generatedFeature.benchUseCase()
         var generatedSum = 0
-        let generated = try clock.measure {
-            for _ in 0..<iterations { generatedSum &+= try generatedFeature.benchUseCase().execute() }
+        let generated = clock.measure {
+            for _ in 0..<iterations { generatedSum &+= generatedFeature.benchUseCase().execute() }
         }
 
         // C. A mano (misma semántica)
@@ -63,9 +63,9 @@ struct SameSemanticsBenchmarkTests {
                 coldSum &+= try r.makeChildScope(for: BenchFeatureScope.self).resolve(BenchUseCase.self).execute()
             }
         }
-        let generatedCold = try clock.measure {
+        let generatedCold = clock.measure {
             for _ in 0..<coldIterations {
-                coldSum &+= try DaggerGraph_BenchModuleV1().makeBenchFeatureScope().benchUseCase().execute()
+                coldSum &+= DaggerGraph_BenchModuleV1().makeBenchFeatureScope().benchUseCase().execute()
             }
         }
 

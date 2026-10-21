@@ -14,7 +14,7 @@ extension DaggerGraph_FintechCoreModule_FintechSharedFlagsModule_FintechModuleV1
         init(parent: DaggerGraph_FintechCoreModule_FintechSharedFlagsModule_FintechModuleV1) { self.parent = parent }
 
         private var _fintechCardEngineProtocol: (any FintechCardEngineProtocol)?
-        func fintechCardEngineProtocol() throws -> any FintechCardEngineProtocol {
+        func fintechCardEngineProtocol() -> any FintechCardEngineProtocol {
             if let cached = _fintechCardEngineProtocol { return cached }
             let value = FintechModuleV1.cardEngine()
             _fintechCardEngineProtocol = value
@@ -22,7 +22,7 @@ extension DaggerGraph_FintechCoreModule_FintechSharedFlagsModule_FintechModuleV1
         }
 
         private var _fintechCoreBankingProtocol: (any FintechCoreBankingProtocol)?
-        func fintechCoreBankingProtocol() throws -> any FintechCoreBankingProtocol {
+        func fintechCoreBankingProtocol() -> any FintechCoreBankingProtocol {
             if let cached = _fintechCoreBankingProtocol { return cached }
             let value = FintechModuleV0_1.coreBanking()
             _fintechCoreBankingProtocol = value
@@ -30,15 +30,15 @@ extension DaggerGraph_FintechCoreModule_FintechSharedFlagsModule_FintechModuleV1
         }
 
         private var _fintechMockupViewModel: FintechMockupViewModel?
-        func fintechMockupViewModel() throws -> FintechMockupViewModel {
+        func fintechMockupViewModel() -> FintechMockupViewModel {
             if let cached = _fintechMockupViewModel { return cached }
-            let value = try FintechMockupViewModel(flagsRepository: parent.fintechABFlagsRepositoryProtocol())
+            let value = FintechMockupViewModel(flagsRepository: parent.fintechABFlagsRepositoryProtocol())
             _fintechMockupViewModel = value
             return value
         }
 
-        func getFintechDashboardUseCase() throws -> GetFintechDashboardUseCase {
-            try GetFintechDashboardUseCase(coreBanking: fintechCoreBankingProtocol(), cardEngine: fintechCardEngineProtocol(), layoutVariant: parent.fintechHomeLayoutVariantProtocol(), creditOfferVariant: parent.fintechCreditOfferVariantProtocol())
+        func getFintechDashboardUseCase() -> GetFintechDashboardUseCase {
+            GetFintechDashboardUseCase(coreBanking: fintechCoreBankingProtocol(), cardEngine: fintechCardEngineProtocol(), layoutVariant: parent.fintechHomeLayoutVariantProtocol(), creditOfferVariant: parent.fintechCreditOfferVariantProtocol())
         }
     }
 }

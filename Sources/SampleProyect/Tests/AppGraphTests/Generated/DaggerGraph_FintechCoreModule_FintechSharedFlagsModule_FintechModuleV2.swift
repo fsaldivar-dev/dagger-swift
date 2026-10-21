@@ -14,47 +14,47 @@ final class DaggerGraph_FintechCoreModule_FintechSharedFlagsModule_FintechModule
     /// Abre el scope `FintechScope` (sus `@Scoped` viven mientras viva el objeto devuelto).
     func makeFintechScope() -> FintechScopeGraph { FintechScopeGraph(parent: self) }
 
-    func authSessionRepository() throws -> AuthSessionRepository {
+    func authSessionRepository() -> AuthSessionRepository {
         AuthSessionRepository()
     }
 
-    func authSessionRepositoryV2() throws -> AuthSessionRepositoryV2 {
+    func authSessionRepositoryV2() -> AuthSessionRepositoryV2 {
         AuthSessionRepositoryV2()
     }
 
-    func countryAuthRepositoryImpl() throws -> CountryAuthRepositoryImpl {
+    func countryAuthRepositoryImpl() -> CountryAuthRepositoryImpl {
         CountryAuthRepositoryImpl()
     }
 
-    func fakerGitHubRepository() throws -> FakerGitHubRepository {
+    func fakerGitHubRepository() -> FakerGitHubRepository {
         FakerGitHubRepository()
     }
 
-    func featureFlagRepositoryImpl() throws -> FeatureFlagRepositoryImpl {
+    func featureFlagRepositoryImpl() -> FeatureFlagRepositoryImpl {
         FeatureFlagRepositoryImpl()
     }
 
-    func fintechABFlagsRepositoryImpl() throws -> FintechABFlagsRepositoryImpl {
+    func fintechABFlagsRepositoryImpl() -> FintechABFlagsRepositoryImpl {
         FintechABFlagsRepositoryImpl()
     }
 
     private var _fintechABFlagsRepositoryProtocol: (any FintechABFlagsRepositoryProtocol)?
-    func fintechABFlagsRepositoryProtocol() throws -> any FintechABFlagsRepositoryProtocol {
+    func fintechABFlagsRepositoryProtocol() -> any FintechABFlagsRepositoryProtocol {
         if let cached = _fintechABFlagsRepositoryProtocol { return cached }
         let value = FintechSharedFlagsModule.abFlagsRepository()
         _fintechABFlagsRepositoryProtocol = value
         return value
     }
 
-    func fintechCreditOfferVariantProtocol() throws -> any FintechCreditOfferVariantProtocol {
-        try FintechCoreModule.provideCreditOfferVariant(flags: fintechABFlagsRepositoryProtocol())
+    func fintechCreditOfferVariantProtocol() -> any FintechCreditOfferVariantProtocol {
+        FintechCoreModule.provideCreditOfferVariant(flags: fintechABFlagsRepositoryProtocol())
     }
 
-    func fintechHomeLayoutVariantProtocol() throws -> any FintechHomeLayoutVariantProtocol {
-        try FintechCoreModule.provideHomeLayoutVariant(flags: fintechABFlagsRepositoryProtocol())
+    func fintechHomeLayoutVariantProtocol() -> any FintechHomeLayoutVariantProtocol {
+        FintechCoreModule.provideHomeLayoutVariant(flags: fintechABFlagsRepositoryProtocol())
     }
 
-    func liveGitHubRepository() throws -> LiveGitHubRepository {
+    func liveGitHubRepository() -> LiveGitHubRepository {
         LiveGitHubRepository()
     }
 }

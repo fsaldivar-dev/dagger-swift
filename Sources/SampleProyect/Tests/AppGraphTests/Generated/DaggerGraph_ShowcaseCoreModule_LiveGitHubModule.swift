@@ -18,75 +18,75 @@ final class DaggerGraph_ShowcaseCoreModule_LiveGitHubModule {
     func makeRepoDetailModule() -> RepoDetailModuleGraph { RepoDetailModuleGraph(parent: self) }
 
     private var _authRepositoryProtocol: (any AuthRepositoryProtocol)?
-    func authRepositoryProtocol() throws -> any AuthRepositoryProtocol {
+    func authRepositoryProtocol() -> any AuthRepositoryProtocol {
         if let cached = _authRepositoryProtocol { return cached }
         let value = LiveGitHubModule.authRepository()
         _authRepositoryProtocol = value
         return value
     }
 
-    func authSessionRepository() throws -> AuthSessionRepository {
+    func authSessionRepository() -> AuthSessionRepository {
         AuthSessionRepository()
     }
 
-    func authSessionRepositoryV2() throws -> AuthSessionRepositoryV2 {
+    func authSessionRepositoryV2() -> AuthSessionRepositoryV2 {
         AuthSessionRepositoryV2()
     }
 
-    func countryAuthRepositoryImpl() throws -> CountryAuthRepositoryImpl {
+    func countryAuthRepositoryImpl() -> CountryAuthRepositoryImpl {
         CountryAuthRepositoryImpl()
     }
 
-    func fakerGitHubRepository() throws -> FakerGitHubRepository {
+    func fakerGitHubRepository() -> FakerGitHubRepository {
         FakerGitHubRepository()
     }
 
-    func featureFlagRepositoryImpl() throws -> FeatureFlagRepositoryImpl {
+    func featureFlagRepositoryImpl() -> FeatureFlagRepositoryImpl {
         FeatureFlagRepositoryImpl()
     }
 
     private var _featureFlagRepositoryProtocol: (any FeatureFlagRepositoryProtocol)?
-    func featureFlagRepositoryProtocol() throws -> any FeatureFlagRepositoryProtocol {
+    func featureFlagRepositoryProtocol() -> any FeatureFlagRepositoryProtocol {
         if let cached = _featureFlagRepositoryProtocol { return cached }
         let value = LiveGitHubModule.featureFlags()
         _featureFlagRepositoryProtocol = value
         return value
     }
 
-    func feedViewModel() throws -> FeedViewModel {
-        try FeedViewModel(getProfileUseCase: getProfileUseCase(), getRepositoriesUseCase: getRepositoriesUseCase(), authRepository: authRepositoryProtocol(), flagRepository: featureFlagRepositoryProtocol())
+    func feedViewModel() -> FeedViewModel {
+        FeedViewModel(getProfileUseCase: getProfileUseCase(), getRepositoriesUseCase: getRepositoriesUseCase(), authRepository: authRepositoryProtocol(), flagRepository: featureFlagRepositoryProtocol())
     }
 
-    func fintechABFlagsRepositoryImpl() throws -> FintechABFlagsRepositoryImpl {
+    func fintechABFlagsRepositoryImpl() -> FintechABFlagsRepositoryImpl {
         FintechABFlagsRepositoryImpl()
     }
 
-    func getProfileUseCase() throws -> GetProfileUseCase {
-        try GetProfileUseCase(gitHubRepository: gitHubRepositoryProtocol())
+    func getProfileUseCase() -> GetProfileUseCase {
+        GetProfileUseCase(gitHubRepository: gitHubRepositoryProtocol())
     }
 
-    func getRepositoriesUseCase() throws -> GetRepositoriesUseCase {
-        try GetRepositoriesUseCase(gitHubRepository: gitHubRepositoryProtocol())
+    func getRepositoriesUseCase() -> GetRepositoriesUseCase {
+        GetRepositoriesUseCase(gitHubRepository: gitHubRepositoryProtocol())
     }
 
     private var _gitHubRepositoryProtocol: (any GitHubRepositoryProtocol)?
-    func gitHubRepositoryProtocol() throws -> any GitHubRepositoryProtocol {
+    func gitHubRepositoryProtocol() -> any GitHubRepositoryProtocol {
         if let cached = _gitHubRepositoryProtocol { return cached }
         let value = LiveGitHubModule.gitHubRepository()
         _gitHubRepositoryProtocol = value
         return value
     }
 
-    func liveGitHubRepository() throws -> LiveGitHubRepository {
+    func liveGitHubRepository() -> LiveGitHubRepository {
         LiveGitHubRepository()
     }
 
-    func repoExplorerStrategyProtocol() throws -> any RepoExplorerStrategyProtocol {
-        try ShowcaseCoreModule.explorerStrategy(flags: featureFlagRepositoryProtocol())
+    func repoExplorerStrategyProtocol() -> any RepoExplorerStrategyProtocol {
+        ShowcaseCoreModule.explorerStrategy(flags: featureFlagRepositoryProtocol())
     }
 
     func validatedSession() throws -> ValidatedSession {
-        guard let value = try ShowcaseCoreModule.validatedSession(auth: authRepositoryProtocol()) else {
+        guard let value = ShowcaseCoreModule.validatedSession(auth: authRepositoryProtocol()) else {
             throw GraphError.unmetPrecondition(type: String(reflecting: ValidatedSession.self), reason: "Se requiere sesión activa de @fsaldivar-dev para inspeccionar módulos protegidos")
         }
         return value

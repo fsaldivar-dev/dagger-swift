@@ -23,18 +23,18 @@ struct GeneratedGraphTests {
         let graph = DaggerGraph_ShowcaseCoreModule_FakerGitHubModule_RepoDetailModule()
 
         // @Singleton: misma instancia; el Fake del test sobrescribe a LiveGitHubModule (includes).
-        let repoA = try graph.gitHubRepositoryProtocol() as AnyObject
-        let repoB = try graph.gitHubRepositoryProtocol() as AnyObject
+        let repoA = graph.gitHubRepositoryProtocol() as AnyObject
+        let repoB = graph.gitHubRepositoryProtocol() as AnyObject
         // (Bool precalculado: `#expect(a === b)` hace crashear al compilador 6.3 al reabstraer `===`.)
         let sameSingleton = repoA === repoB
         #expect(sameSingleton)
-        #expect(try graph.gitHubRepositoryProtocol().isFakerEnvironment)
+        #expect(graph.gitHubRepositoryProtocol().isFakerEnvironment)
 
         // @Precondition: sin sesión, el scope de detalle no se construye.
         let detail = graph.makeRepoDetailModule()
         #expect(throws: GraphError.self) { _ = try detail.repoDetailInspector() }
 
-        try graph.authRepositoryProtocol().loginAsSaldivar()
+        graph.authRepositoryProtocol().loginAsSaldivar()
         let inspectorA = try detail.repoDetailInspector()
         let inspectorB = try detail.repoDetailInspector()
         let sameScope = inspectorA === inspectorB
@@ -47,8 +47,8 @@ struct GeneratedGraphTests {
         #expect(distinct)
 
         // Transient @Inject con dependencias directas.
-        let vm = try graph.feedViewModel()
-        let auth = try graph.authRepositoryProtocol() as AnyObject
+        let vm = graph.feedViewModel()
+        let auth = graph.authRepositoryProtocol() as AnyObject
         let sharedAuth = (vm.authRepository as AnyObject) === auth
         #expect(sharedAuth)
     }

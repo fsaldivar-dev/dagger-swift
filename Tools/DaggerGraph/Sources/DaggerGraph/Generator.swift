@@ -234,6 +234,20 @@ extension Validator {
             String(repeating: "parent.", count: max(0, depth(home) - depth(self.homeOf(target, homes) ?? .root)))
         }
 
+        /// ¿Construir el nodo puede fallar? (una @Precondition o una función `throws` en su subgrafo).
+        /// Solo esos accessors se declaran `throws`: el resto se usa sin `try`.
+        var throwsMemo: [Int: Bool] = [:]
+        func canThrow(_ idx: Int, stack: Set<Int> = []) -> Bool {
+            if let m = throwsMemo[idx] { return m }
+            guard !stack.contains(idx) else { return false }
+            let b = nodes[idx].binding
+            let result = b.kind == .precondition || b.isThrowing
+                || b.deps.contains { d in provider(d.type).map { canThrow($0, stack: stack.union([idx])) } ?? false }
+            throwsMemo[idx] = result
+            return result
+        }
+        func throwsClause(_ idx: Int) -> String { canThrow(idx) ? " throws" : "" }
+
         /// Expresión que construye el nodo con llamadas directas a sus dependencias.
         func call(_ idx: Int, from home: Home) -> (prelude: [String], expr: String) {
             let b = nodes[idx].binding
@@ -242,7 +256,8 @@ extension Validator {
                 let value = path(from: home, to: p) + "\(accessor(p))()"
                 return d.label == "_" ? value : "\(d.label): \(value)"
             }.joined(separator: ", ")
-            let needsTry = b.isThrowing || !b.deps.isEmpty
+            let needsTry = b.isThrowing
+                || b.deps.contains { d in provider(d.type).map { canThrow($0) } ?? false }
             let prefix = needsTry ? "try " : ""
             let prelude = hasPreconditions(idx) ? ["try _pre_\(accessor(idx))()"] : []
             switch b.kind {
@@ -314,7 +329,7 @@ extension Validator {
             case .singleton, .scoped:
                 return """
                     private var _\(name): \(Self.optionalStorage(type))
-                    func \(name)() throws -> \(type) {
+                    func \(name)()\(throwsClause(idx)) -> \(type) {
                 \(lockLine)        if let cached = _\(name) { return cached }
                 \(pre)        let value = \(expr)
                         _\(name) = value
@@ -324,7 +339,7 @@ extension Validator {
             case .inject where b.lifetime != .transient:
                 return """
                     private var _\(name): \(type)?
-                    func \(name)() throws -> \(type) {
+                    func \(name)()\(throwsClause(idx)) -> \(type) {
                 \(lockLine)        if let cached = _\(name) { return cached }
                 \(pre)        let value = \(expr)
                         _\(name) = value
@@ -343,7 +358,7 @@ extension Validator {
                 """
             default:
                 return """
-                    func \(name)() throws -> \(type) {
+                    func \(name)()\(throwsClause(idx)) -> \(type) {
                 \(pre)        \(prelude.isEmpty ? "" : "return ")\(expr)
                     }
                 """

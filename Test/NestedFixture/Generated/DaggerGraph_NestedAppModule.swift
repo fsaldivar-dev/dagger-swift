@@ -13,7 +13,7 @@ final class DaggerGraph_NestedAppModule: @unchecked Sendable {
     func makeNestedSessionScope() -> NestedSessionScopeGraph { NestedSessionScopeGraph(parent: self) }
 
     private var _nestedApiClient: NestedApiClient?
-    func nestedApiClient() throws -> NestedApiClient {
+    func nestedApiClient() -> NestedApiClient {
         lock.lock(); defer { lock.unlock() }
         if let cached = _nestedApiClient { return cached }
         let value = NestedAppModule.api()

@@ -13,7 +13,7 @@ final class DaggerGraph_BenchModuleV1: @unchecked Sendable {
     func makeBenchFeatureScope() -> BenchFeatureScopeGraph { BenchFeatureScopeGraph(parent: self) }
 
     private var _benchApiClientProtocol: (any BenchApiClientProtocol)?
-    func benchApiClientProtocol() throws -> any BenchApiClientProtocol {
+    func benchApiClientProtocol() -> any BenchApiClientProtocol {
         lock.lock(); defer { lock.unlock() }
         if let cached = _benchApiClientProtocol { return cached }
         let value = BenchModuleV0_1.apiClient()
@@ -21,7 +21,7 @@ final class DaggerGraph_BenchModuleV1: @unchecked Sendable {
         return value
     }
 
-    func benchRepositoryImpl() throws -> BenchRepositoryImpl {
-        try BenchRepositoryImpl(api: benchApiClientProtocol())
+    func benchRepositoryImpl() -> BenchRepositoryImpl {
+        BenchRepositoryImpl(api: benchApiClientProtocol())
     }
 }

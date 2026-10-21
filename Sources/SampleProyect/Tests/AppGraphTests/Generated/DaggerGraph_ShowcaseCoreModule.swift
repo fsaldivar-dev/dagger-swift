@@ -12,31 +12,31 @@ final class DaggerGraph_ShowcaseCoreModule: @unchecked Sendable {
     let lock = NSRecursiveLock()
     init() {}
 
-    func authSessionRepository() throws -> AuthSessionRepository {
+    func authSessionRepository() -> AuthSessionRepository {
         AuthSessionRepository()
     }
 
-    func authSessionRepositoryV2() throws -> AuthSessionRepositoryV2 {
+    func authSessionRepositoryV2() -> AuthSessionRepositoryV2 {
         AuthSessionRepositoryV2()
     }
 
-    func countryAuthRepositoryImpl() throws -> CountryAuthRepositoryImpl {
+    func countryAuthRepositoryImpl() -> CountryAuthRepositoryImpl {
         CountryAuthRepositoryImpl()
     }
 
-    func fakerGitHubRepository() throws -> FakerGitHubRepository {
+    func fakerGitHubRepository() -> FakerGitHubRepository {
         FakerGitHubRepository()
     }
 
-    func featureFlagRepositoryImpl() throws -> FeatureFlagRepositoryImpl {
+    func featureFlagRepositoryImpl() -> FeatureFlagRepositoryImpl {
         FeatureFlagRepositoryImpl()
     }
 
-    func fintechABFlagsRepositoryImpl() throws -> FintechABFlagsRepositoryImpl {
+    func fintechABFlagsRepositoryImpl() -> FintechABFlagsRepositoryImpl {
         FintechABFlagsRepositoryImpl()
     }
 
-    func liveGitHubRepository() throws -> LiveGitHubRepository {
+    func liveGitHubRepository() -> LiveGitHubRepository {
         LiveGitHubRepository()
     }
 }
