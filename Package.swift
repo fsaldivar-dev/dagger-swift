@@ -6,7 +6,9 @@ import CompilerPluginSupport
 
 let package = Package(
     name: "DaggerSwift",
-    platforms: [.macOS(.v14), .iOS(.v17), .tvOS(.v17), .watchOS(.v10), .visionOS(.v1), .macCatalyst(.v17)],
+    // Mínimos reales del runtime (parameter packs en funciones se pueden usar desde iOS 13; nada requiere iOS 17).
+    // Bajarlos desbloquea apps que soportan iOS 15/16 (p. ej. Firefox for iOS).
+    platforms: [.macOS(.v12), .iOS(.v15), .tvOS(.v15), .watchOS(.v8), .visionOS(.v1), .macCatalyst(.v15)],
     products: [
         .library(
             name: "DaggerSwift",

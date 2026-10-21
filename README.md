@@ -1041,6 +1041,8 @@ Guía completa con ejemplo: [`docs/COORDINATOR.md`](./docs/COORDINATOR.md).
 - Las cachés de los scopes hijos se invalidan cuando un ancestro registra.
 - Todas las `@Precondition` del subgrafo se evalúan antes de construir nada (0 allocations si fallan).
 - `autoTeardown` funciona sin Objective-C (Linux); `visionOS` en `platforms`.
+- **Mínimos de plataforma más bajos:** iOS 15, macOS 12, tvOS 15, watchOS 8, Mac Catalyst 15 (antes iOS 17 / macOS 14).
+  Nada del runtime requería iOS 17; el límite impedía adoptarlo en apps que soportan iOS 15/16 (p. ej. Firefox for iOS).
 
 **Nuevo**
 - `GraphError.isProgrammerError`, `ScopeContainer.programmerErrorPolicy`.
