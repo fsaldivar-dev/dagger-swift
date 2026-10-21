@@ -9,12 +9,15 @@ Motor híbrido de **Resolución Explícita en Tiempo de Compilación (`@Module`,
 > (bindings faltantes, ciclos, scopes no abiertos) la hace la herramienta **`dagger-graph`** (CLI o build plugin),
 > y `dagger-graph generate` puede reemplazar `resolve` por factories directas. Ver [§6](#6--compile-time-vs-runtime-qué-valida-cada-capa).
 
+> 🚀 **¿Primera vez? [Quick Start: cómo se usa y lo que no debes hacer aunque compile](./docs/QUICKSTART.md)**
+>
 > 📘 **[Leer el Libro Completo: Resolución Explícita vs. Dinámica, Comparativa contra Otras Librerías y Benchmarks](./LIBRO_INYECCION_Y_BENCHMARKS.md)**
 
 ---
 
 ## 📑 Tabla de Contenidos (Manual Completo)
 
+0. **[Quick Start (docs/QUICKSTART.md)](./docs/QUICKSTART.md)**: instalación, las cuatro piezas en orden, y lo que no debes hacer aunque se pueda.
 1. **[Cómo Funciona el Grafo de Dependencias (Diagrama General)](#1--cómo-funciona-el-grafo-de-dependencias-diagrama-general)**
 2. **[Manual de Conceptos y Decoradores](#2--manual-de-conceptos-y-decoradores)**
    - [2.1 ¿Qué es un `@Module`?](#21-qué-es-un-module)
@@ -23,6 +26,7 @@ Motor híbrido de **Resolución Explícita en Tiempo de Compilación (`@Module`,
    - [2.4 ¿Qué es una `@Precondition` (Candado de Estado / Sesión por País)?](#24-qué-es-una-precondition-candado-de-estado--sesión-por-país)
    - [2.5 Ciclo de Vida, Memoria y `Plug & UnPlug` (`teardownScope()`)](#25-ciclo-de-vida-memoria-y-plug--unplug-teardownscope)
    - [2.6 Fronteras de la Librería: Ciclo de Vida de Memoria (DI) vs. Ciclo de Vida de la App (RootComposer)](#26-fronteras-de-la-librería-ciclo-de-vida-de-memoria-di-vs-ciclo-de-vida-de-la-app-rootcomposer)
+   - [2.7 El compositor raíz: `@AppCompose` y `@Compose`](#27-el-compositor-raíz-appcompose-y-compose-resolución-jerárquica)
 3. **[Manual Completo de Pruebas (`DaggerSwiftTesting` + Unit Tests + Linter)](#3--manual-completo-de-pruebas-daggerswifttesting--unit-tests--linter)**
    - [3.1 Nivel 1: Pruebas Unitarias Puras (Sin Grafo)](#31-nivel-1-pruebas-unitarias-puras-sin-grafo)
    - [3.2 Nivel 2: Pruebas del Grafo de Dependencias (`expectGraph` DSL)](#32-nivel-2-pruebas-del-grafo-de-dependencias-expectgraph-dsl)
@@ -693,6 +697,49 @@ Para no mezclar el estado de la UI con el estado del negocio ni con las dependen
 
 ---
 
+### 2.7 El compositor raíz: `@AppCompose` y `@Compose` (resolución jerárquica)
+
+El *RootComposer* de §2.6 deja de ser pseudocódigo. Es una clase que **lista** lo que la app necesita por
+nivel, y la macro genera el cableado: nada de `resolve` a mano, nada de registro, y un solo `catch` en quien
+la crea.
+
+```swift
+@MainActor
+@AppCompose(AppModule.self)
+final class AppCompose {
+    // Nivel app: existen toda la vida. init() los resuelve una vez; si falta uno, init lanza.
+    let theme: Theme
+    let userPreferences: UserPreferences
+
+    // Scope hijo: se abre con openAccountSession(), se cierra con close(). Quien guarda el valor es dueño.
+    @Compose(AccountSessionModule.self)
+    struct AccountSession {
+        let session: ActiveAccountSession     // @Precondition: init lanza unmetPrecondition sin construir nada
+        let currentAccount: CurrentAccount    // @Scoped del módulo de sesión
+
+        @Compose(EditorModule.self)           // sub-sub-scope: session.openEditor()
+        struct Editor { let store: EditorStore }
+    }
+}
+
+// En la raíz de la app (SwiftUI App, AppDelegate o Coordinator): el único do/catch del grafo.
+let compose = try AppCompose()
+var session = try compose.openAccountSession()
+// Cambio de cuenta: cerrar y reabrir. ScopeDisposable y la auditoría de fugas siguen funcionando.
+session.close()
+session = try compose.openAccountSession()
+```
+
+Qué genera cada macro: `graph` (el `ScopeContainer` de ese nivel), `init() throws` en la raíz o
+`init(parent:) throws` en un hijo, `close()` y un `openX() throws -> X` por cada tipo anidado con `@Compose`.
+Las propiedades con valor inicial no se piden al grafo. Un `init` propio desactiva el generado.
+
+Es el equivalente de `@Component` / `@Subcomponent` de Dagger: tú escribes la interfaz, la herramienta el
+cableado. Lo que sigue siendo tuyo es la política de errores (§9) y publicar los objetos en tu UI
+(`.environment(...)` en SwiftUI).
+
+---
+
 ## 3. 🧪 Manual Completo de Pruebas (`DaggerSwiftTesting` + Unit Tests + Linter)
 
 DaggerSwift v2 está diseñado para probar tu aplicación en **3 niveles complementarios**:
@@ -1046,6 +1093,7 @@ Guía completa con ejemplo: [`docs/COORDINATOR.md`](./docs/COORDINATOR.md).
 
 **Nuevo**
 - `GraphError.isProgrammerError`, `ScopeContainer.programmerErrorPolicy`.
+- `@AppCompose(Module.self)` / `@Compose(Scope.self)`: compositor raíz con resolución jerárquica (§2.7).
 - `dagger-graph`: validación por raíz, `scopeNotActive` estático, build plugin, `generate`, tests de humo, manifiestos.
 
 ---
@@ -1073,6 +1121,8 @@ swift run dagger-cli help
 
 ## 📚 Documentación Adicional
 
+- 🚀 **[Quick Start](./docs/QUICKSTART.md)**: cómo se usa en 10 minutos y lo que no debes hacer aunque compile.
+- 🧭 **[Errores del grafo y el patrón Coordinator](./docs/COORDINATOR.md)**
 - 📘 **[El Libro de DaggerSwift v2: Resolución Explícita vs. Dinámica, Comparativa y Benchmarks](./LIBRO_INYECCION_Y_BENCHMARKS.md)**
 - 📄 **[Memoria Técnica: Limitaciones de DaggerSwift v1 y Dolores en Apps Productivas](./MEMORIA_DAGGER_V1.md)**
 - 📜 **[Manifiesto](./MANIFESTO.md)**

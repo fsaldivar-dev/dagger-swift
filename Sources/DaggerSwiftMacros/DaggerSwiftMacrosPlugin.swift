@@ -159,6 +159,14 @@ struct DaggerSwiftMacrosPlugin {
                 expanded = nil
             }
 
+        case "AppComposeMacro", "ComposeMacro":
+            if macroRole == "member" {
+                expanded = expandComposeMember(
+                    attrSource: attrSource, declSource: declSource, isRoot: typeName == "AppComposeMacro")
+            } else {
+                expanded = nil
+            }
+
         case "ModulePaletteMacro":
             if macroRole == "extension" {
                 expanded = extendedType.isEmpty ? nil : "extension \(extendedType): DaggerSwift.GraphScope {}"
@@ -468,6 +476,85 @@ struct DaggerSwiftMacrosPlugin {
         lines.append("}")
 
         return lines.joined(separator: "\n")
+    }
+
+    // MARK: - 4. @AppCompose / @Compose (RootComposer con resolución jerárquica)
+
+    /// `@AppCompose(M.self)` (raíz) y `@Compose(S.self)` (scope hijo). Cada `let` sin valor inicial se
+    /// resuelve del contenedor de su nivel; cada tipo anidado con `@Compose` recibe un `openX()`.
+    private static func expandComposeMember(attrSource: String, declSource: String, isRoot: Bool) -> String {
+        let clean = stripComments(declSource)
+        let macroName = isRoot ? "@AppCompose" : "@Compose"
+        guard let target = extractAttributeArgument(from: attrSource)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !target.isEmpty else {
+            diagnose("\(macroName): falta el módulo o scope, p. ej. \(macroName)(AppModule.self)", at: nil)
+            return ""
+        }
+        if containsExplicitInitializer(in: topLevelSource(of: clean)) {
+            diagnose("\(macroName): el tipo ya declara un init; la macro no genera el suyo", at: "init(")
+            return ""
+        }
+        let properties = parseInjectableStoredProperties(from: clean)
+        let children = parseComposeChildren(from: clean)
+
+        var lines: [String] = []
+        lines.append("/// Contenedor de este nivel del grafo. Lo abre el `init`; `close()` lo cierra.")
+        lines.append("public let graph: DaggerSwift.ScopeContainer")
+        lines.append("")
+        if isRoot {
+            lines.append("/// Arranque: abre la raíz con \(target) y resuelve cada propiedad. Lanza `GraphError` si falta")
+            lines.append("/// algo: el único `catch` del grafo va en quien crea el compositor.")
+            lines.append("public init() throws {")
+            lines.append("    let graph = DaggerSwift.ScopeContainer.root(modules: [\(target)])")
+        } else {
+            lines.append("/// Abre este scope bajo `parent` y resuelve cada propiedad. Lanza `GraphError` si falta algo o")
+            lines.append("/// una `@Precondition` no se cumple (antes de construir nada).")
+            lines.append("public init(parent: DaggerSwift.ScopeContainer) throws {")
+            lines.append("    let graph = parent.makeChildScope(for: \(target))")
+        }
+        lines.append("    self.graph = graph")
+        for prop in properties {
+            let typeSelf = prop.type.contains(" ") ? "(\(prop.type)).self" : "\(prop.type).self"
+            lines.append("    self.\(prop.name) = try graph.resolve(\(typeSelf))")
+        }
+        lines.append("}")
+        lines.append("")
+        lines.append("/// Cierra este nivel y sus hijos en cascada. Devuelve los tipos que seguían retenidos.")
+        lines.append("@discardableResult")
+        lines.append("public func close() -> [String] {")
+        lines.append("    graph.teardown()")
+        lines.append("}")
+        for child in children {
+            lines.append("")
+            lines.append("/// Abre el scope hijo `\(child)`. Quien guarda el valor es dueño de su ciclo de vida.")
+            lines.append("public func open\(child)() throws -> \(child) {")
+            lines.append("    try \(child)(parent: graph)")
+            lines.append("}")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// Nombres de los tipos anidados (struct/class) marcados con `@Compose(...)` en el primer nivel del cuerpo.
+    private static func parseComposeChildren(from source: String) -> [String] {
+        let body = extractOuterBracesBody(from: source)
+        var names: [String] = []
+        for decl in splitTopLevelDeclarations(in: body) {
+            guard decl.contains("@Compose") else { continue }
+            let header = decl.firstIndex(of: "{").map { String(decl[..<$0]) } ?? decl
+            let tokens = header.split(whereSeparator: { $0.isWhitespace || $0 == ":" }).map(String.init)
+            guard let kw = tokens.lastIndex(where: { $0 == "struct" || $0 == "class" }),
+                  kw + 1 < tokens.count else { continue }
+            names.append(tokens[kw + 1])
+        }
+        return names
+    }
+
+    /// El cuerpo del tipo sin los cuerpos de sus tipos anidados (para no confundir un `init` de un hijo con el propio).
+    private static func topLevelSource(of source: String) -> String {
+        let body = extractOuterBracesBody(from: source)
+        return splitTopLevelDeclarations(in: body)
+            .filter { !($0.contains("struct ") || $0.contains("class ") || $0.contains("enum ") || $0.contains("actor ")) }
+            .joined(separator: "\n")
     }
 
     // MARK: - Helpers de Parsing Sintáctico Ligero

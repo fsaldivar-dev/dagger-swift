@@ -150,3 +150,39 @@ public macro Inject<S: GraphScope>(scope: S.Type) = #externalMacro(
     module: "DaggerSwiftMacros",
     type: "InjectMacro"
 )
+
+// MARK: - RootComposer: @AppCompose / @Compose (resolución jerárquica)
+
+/// Compositor raíz (*RootComposer*): la única pieza de la app que abre el grafo y resuelve de él.
+///
+/// ```swift
+/// @MainActor
+/// @AppCompose(AppModule.self)
+/// final class AppCompose {
+///   let theme: Theme                      // nivel app: se resuelve en init(); si falta, init lanza
+///   @Compose(SessionModule.self)
+///   struct Session {                      // scope hijo: openSession() lo abre, close() lo cierra
+///     let currentAccount: CurrentAccount  // @Scoped del módulo de sesión
+///     @Compose(EditorModule.self)
+///     struct Editor { ... }               // sub-sub-scope: session.openEditor()
+///   }
+/// }
+/// ```
+/// Genera `graph`, `init() throws` (abre la raíz con el módulo indicado y resuelve cada `let`),
+/// `close()` y un `openX() throws -> X` por cada tipo anidado marcado con `@Compose`.
+/// Las propiedades con valor inicial no se piden al grafo. Un `init` propio desactiva el generado.
+@attached(member, names: arbitrary)
+public macro AppCompose<M: GraphModule>(_ module: M.Type) = #externalMacro(
+    module: "DaggerSwiftMacros",
+    type: "AppComposeMacro"
+)
+
+/// Nivel hijo del compositor (`AppCompose` → `Compose` → `Compose` …): abre un scope del grafo bajo el
+/// contenedor del padre y resuelve sus `let` de ahí. Genera `graph`, `init(parent:) throws`, `close()`
+/// y `openX()` por cada `@Compose` anidado. Si un `let` es una `@Precondition` no cumplida, `init` lanza
+/// `GraphError.unmetPrecondition` antes de construir nada.
+@attached(member, names: arbitrary)
+public macro Compose<S: GraphScope>(_ scope: S.Type) = #externalMacro(
+    module: "DaggerSwiftMacros",
+    type: "ComposeMacro"
+)
