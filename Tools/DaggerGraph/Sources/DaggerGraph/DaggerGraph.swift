@@ -44,7 +44,7 @@ enum DeclaredTypes {
 }
 
 struct CacheFile: Codable {
-    static let currentVersion = 5
+    static let currentVersion = 6
     var version = CacheFile.currentVersion
     var roots: [String] = []
     var entries: [String: CacheEntry] = [:]
@@ -92,7 +92,7 @@ final class Clock {
 
 @main
 struct DaggerGraphCommand {
-    static let markers: [Data] = ["@Inject", "@Module", "bindInstance(", ".provide"].map { Data($0.utf8) }
+    static let markers: [Data] = ["@Inject", "@Module", "bindInstance(", ".provide", "register(service:", ".resolve("].map { Data($0.utf8) }
     static let skipDirs: Set<String> = ["DerivedData", "Pods", "Carthage", "node_modules"]
 
     struct ScannedFile: Sendable {

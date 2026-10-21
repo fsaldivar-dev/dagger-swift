@@ -37,6 +37,8 @@ struct Validator {
     let nodes: [Node]
     let dynamic: [(file: String, reg: DynamicRegistration)]
     let roots: [(file: String, root: RootFact, parent: Int?)]
+    var locatorRegistrations: [(file: String, use: LocatorUse)] = []
+    var locatorRequests: [(file: String, use: LocatorUse)] = []
     /// Módulos extra a importar en el código generado (`generate --import M`).
     var extraImports: Set<String> = []
     /// Tipo → archivo que lo declara (solo en `generate`).
@@ -57,6 +59,10 @@ struct Validator {
             let offset = roots.count
             roots += f.roots.map { (file, $0, $0.parent.map { $0 + offset }) }
             for m in f.modules where modules[m.name] == nil { modules[m.name] = (file, m) }
+        }
+        for (file, f) in facts {
+            locatorRegistrations += f.locatorRegistrations.map { (file, $0) }
+            locatorRequests += f.locatorRequests.map { (file, $0) }
         }
         self.nodes = nodes
         self.dynamic = dynamic
@@ -87,6 +93,7 @@ struct Validator {
         groups.formUnion(cycles())
         groups.formUnion(scopeViolations().map { [$0] })
         groups.formUnion(rootDiagnostics())
+        groups.formUnion(locatorDiagnostics())
         return groups.sorted { $0[0] < $1[0] }.flatMap { $0 }
     }
 
@@ -402,6 +409,39 @@ extension Validator {
                     }
                     stack.append(contentsOf: b.deps.map(\.type))
                 }
+            }
+        }
+        return out
+    }
+}
+
+// MARK: - 5. Auditoría de service locator (migraciones: Dip, Resolver, Swinject…)
+
+extension Validator {
+    /// Cada tipo que se pide a un service locator debe registrarse en algún lado (o proveerlo DaggerSwift).
+    /// Si hay registros cuyo tipo no se puede deducir (sin `as T`), el hallazgo es `warning` (podría ser
+    /// uno de esos); si todos los registros tienen tipo, es `error`: crashearía en runtime.
+    func locatorDiagnostics() -> [[Diagnostic]] {
+        guard !locatorRegistrations.isEmpty else { return [] }
+        let registered = Set(locatorRegistrations.compactMap(\.use.type))
+        let untyped = locatorRegistrations.filter { $0.use.type == nil }
+        var out: [[Diagnostic]] = []
+        var seen = Set<String>()
+        for (file, req) in locatorRequests {
+            guard let type = req.type, !registered.contains(type), providerIndices(for: type) == nil,
+                  !Self.builtins.contains(type) else { continue }
+            let key = "\(file):\(req.loc.line)"
+            guard seen.insert(key).inserted else { continue }
+            if untyped.isEmpty {
+                out.append([Diagnostic(file: file, loc: req.loc, severity: .error,
+                    message: "service locator: se pide '\(type)' pero nunca se registra; crashearía en runtime")])
+            } else {
+                var group = [Diagnostic(file: file, loc: req.loc, severity: .warning,
+                    message: "service locator: se pide '\(type)' y ningún registro tipado lo provee; solo podría venir de un registro sin tipo explícito (agrega 'as \(type)')")]
+                for (rf, r) in untyped.prefix(3) {
+                    group.append(Diagnostic(file: rf, loc: r.loc, severity: .note, message: "registro sin tipo explícito: \(r.text)"))
+                }
+                out.append(group)
             }
         }
         return out

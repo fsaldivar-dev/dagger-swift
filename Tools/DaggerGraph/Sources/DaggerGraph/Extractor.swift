@@ -244,7 +244,66 @@ final class FactExtractor: SyntaxVisitor {
 
     /// Post-orden: la llamada interna (`ScopeContainer.root(...)`) se registra antes que la externa
     /// (`.makeChildScope(...)`), así el hijo encuentra a su padre.
+    /// Service locator: `algo.register(service: x as T)` y `algo.shared.resolve()` / `resolve(T.self)`.
+    private func recordLocatorUse(_ node: FunctionCallExprSyntax) -> Bool {
+        guard let member = node.calledExpression.as(MemberAccessExprSyntax.self) else { return false }
+        let name = member.declName.baseName.text
+        let text = node.trimmedDescription.split(separator: "\n").first.map(String.init) ?? ""
+        if name == "register", let arg = node.arguments.first(where: { $0.label?.text == "service" }) {
+            facts.locatorRegistrations.append(LocatorUse(type: Self.declaredType(of: arg.expression, in: node), loc: loc(node), text: text))
+            return true
+        }
+        guard name == "resolve", let base = member.base?.trimmedDescription, base.hasSuffix(".shared") else { return false }
+        var type: String?
+        if let first = node.arguments.first, first.expression.trimmedDescription.hasSuffix(".self") {
+            type = TypeName.stripSelf(first.expression.trimmedDescription)
+        } else {
+            type = Self.contextualType(of: Syntax(node))
+        }
+        facts.locatorRequests.append(LocatorUse(type: type, loc: loc(node), text: text))
+        return true
+    }
+
+    /// `x as T` → T; `variable` con `let variable: T = ...` en la misma función → T.
+    private static func declaredType(of expr: ExprSyntax, in node: FunctionCallExprSyntax) -> String? {
+        if let cast = expr.as(AsExprSyntax.self) { return TypeName.normalize(cast.type.trimmedDescription) }
+        if let seq = expr.as(SequenceExprSyntax.self), let last = seq.elements.last?.as(TypeExprSyntax.self) {
+            return TypeName.normalize(last.type.trimmedDescription)
+        }
+        guard let ref = expr.as(DeclReferenceExprSyntax.self) else { return nil }
+        var current = Syntax(node).parent
+        while let n = current, !n.is(FunctionDeclSyntax.self) { current = n.parent }
+        guard let fn = current else { return nil }
+        for token in fn.tokens(viewMode: .sourceAccurate) where token.text == ref.baseName.text {
+            if let binding = token.parent?.parent?.as(PatternBindingSyntax.self),
+               let annotated = binding.typeAnnotation?.type {
+                return TypeName.normalize(annotated.trimmedDescription)
+            }
+        }
+        return nil
+    }
+
+    /// Tipo esperado por el contexto: `param: T = X.resolve()` o `let x: T = X.resolve()`.
+    private static func contextualType(of node: Syntax) -> String? {
+        var current = node.parent
+        while let n = current {
+            if let param = n.as(FunctionParameterSyntax.self) {
+                // `x: @autoclosure @escaping () -> T = X.shared.resolve()` pide un T.
+                var t = param.type.as(AttributedTypeSyntax.self)?.baseType ?? param.type
+                if let fn = t.as(FunctionTypeSyntax.self), fn.parameters.isEmpty { t = fn.returnClause.type }
+                return TypeName.normalize(t.trimmedDescription)
+            }
+            if let binding = n.as(PatternBindingSyntax.self) {
+                return binding.typeAnnotation.map { TypeName.normalize($0.type.trimmedDescription) }
+            }
+            if n.is(CodeBlockItemSyntax.self) || n.is(MemberBlockItemSyntax.self) { return nil }
+            current = n.parent
+        }
+        return nil
+    }
+
     override func visitPost(_ node: FunctionCallExprSyntax) {
+        if recordLocatorUse(node) { return }
         if let root = rootFact(for: node) {
             facts.roots.append(root)
             rootIndexByCall[node.id] = facts.roots.count - 1

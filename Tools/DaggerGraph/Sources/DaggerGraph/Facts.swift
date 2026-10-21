@@ -108,11 +108,22 @@ struct RootFact: Codable, Sendable {
     var text: String
 }
 
+/// Uso de un service locator (`X.register(service:)` / `X.shared.resolve()`), típico de apps que migran
+/// a DaggerSwift (p. ej. Firefox con Dip). Permite auditar en compilación qué se pide sin registrarse.
+struct LocatorUse: Codable, Sendable {
+    /// Tipo registrado o pedido; `nil` si no se puede deducir del código (registro sin `as T`).
+    var type: String?
+    var loc: Loc
+    var text: String
+}
+
 struct FileFacts: Codable, Sendable {
     var bindings: [Binding] = []
     var modules: [ModuleFact] = []
     var dynamic: [DynamicRegistration] = []
     var roots: [RootFact] = []
+    var locatorRegistrations: [LocatorUse] = []
+    var locatorRequests: [LocatorUse] = []
 }
 
 enum TypeName {

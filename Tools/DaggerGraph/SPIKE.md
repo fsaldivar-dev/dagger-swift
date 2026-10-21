@@ -78,3 +78,12 @@ Probado: `Features` solo → 6 errores; con el manifiesto de `Services`+`Core` �
 Diseño pendiente (no implementado): publicar el manifiesto como recurso/artefacto del paquete y que el
 build-tool plugin lo descubra en las dependencias (hoy se pasa la ruta a mano); versionar por hash del
 contenido para detectar manifiestos obsoletos; nombres de tipos calificados por módulo (hoy por texto).
+
+### Auditoría de service locator (migraciones desde Dip / Resolver / Swinject)
+Detecta `X.register(service: valor as T)` y los pedidos `X.shared.resolve()` / `resolve(T.self)`, tomando el tipo
+del contexto (`param: T = resolve()`, `@autoclosure () -> T`, `let x: T = resolve()`). Si se pide un tipo que nunca se
+registra → `error` ("crashearía en runtime"); si hay registros sin tipo explícito → `warning` sugiriendo `as T`.
+
+Firefox for iOS (1.632 archivos): 14 registros, 225 pedidos (203 con tipo deducible), 0 hallazgos tras tipar 3
+registros; quitar un registro produce el error en la línea exacta del que lo pide. 305 ms en frío, 79 ms en caliente.
+Límite: asignaciones sueltas (`self.x = resolve()`) no tienen el tipo a la vista (22 de 225 en Firefox).
