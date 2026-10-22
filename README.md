@@ -730,8 +730,10 @@ session.close()
 session = try compose.openAccountSession()
 ```
 
-Qué genera cada macro: `graph` (el `ScopeContainer` de ese nivel), `init() throws` en la raíz o
-`init(parent:) throws` en un hijo, `close()` y un `openX() throws -> X` por cada tipo anidado con `@Compose`.
+Qué genera cada macro: `graph` (el `ScopeContainer` de ese nivel), `init() throws` en la raíz (y
+`makeGraph()` + `init(graph:)` para actuar sobre el grafo antes de resolver: puentes de migración, módulos
+extra en tests) o `init(parent:) throws` en un hijo, `close()` y un `openX() throws -> X` por cada tipo
+anidado con `@Compose`.
 Un `let x: T` se resuelve una vez al abrir el nivel (`@Singleton`, `@Scoped`, `@Precondition`); un
 `let x: Provider<T>` es una fábrica que resuelve en cada llamada (`@Provider`, `@BusinessRule`, `@Inject`).
 Las propiedades con valor inicial no se piden al grafo. Un `init` propio desactiva el generado.
@@ -1104,6 +1106,7 @@ Guía completa con ejemplo: [`docs/COORDINATOR.md`](./docs/COORDINATOR.md).
 - `@AppCompose(Module.self)` / `@Compose(Scope.self)`: compositor raíz con resolución jerárquica (§2.7).
 - `Provider<T>` para `@Provider` / `@BusinessRule` dentro de un compositor (§2.7).
 - `dagger-graph --lint` y `dagger-graph.json`: linter de prácticas (Quick Start §5–6); `@AppCompose` / `@Compose` como raíces.
+- `locator-resolve`: `X.shared.resolve()` cuenta como service locator (además de la auditoría de registro), para medir migraciones.
 - Las macros avisan: `@Inject` en clase no `final` (error), `.init(` como default (warning), `.shared` en `@Module` (warning).
 - `dagger-graph`: validación por raíz, `scopeNotActive` estático, build plugin, `generate`, tests de humo, manifiestos.
 

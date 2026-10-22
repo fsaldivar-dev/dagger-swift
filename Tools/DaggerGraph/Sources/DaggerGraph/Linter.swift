@@ -42,6 +42,7 @@ struct LintConfig: Codable, Sendable {
 
 enum LintRule: String, CaseIterable, Sendable {
     case resolveOutsideCompositor = "resolve-outside-compositor"
+    case locatorResolve = "locator-resolve"
     case containerInFeature = "container-in-feature"
     case moduleStaticResolve = "module-static-resolve"
     case dynamicRegistration = "dynamic-registration"
@@ -60,14 +61,14 @@ enum LintRule: String, CaseIterable, Sendable {
              .injectNonFinal, .providerAsLet:
             return .error
         case .containerInFeature, .dynamicRegistration, .catchOutsideRoot, .sharedInModule,
-             .injectDotInit, .letAsProvider:
+             .injectDotInit, .letAsProvider, .locatorResolve:
             return .warning
         }
     }
 
     var quickStart: String {
         switch self {
-        case .resolveOutsideCompositor: return "5.1"
+        case .resolveOutsideCompositor, .locatorResolve: return "5.1"
         case .containerInFeature: return "5.2"
         case .moduleStaticResolve: return "5.3"
         case .dynamicRegistration: return "5.4"
@@ -129,6 +130,12 @@ extension Validator {
                 if let d = siteDiag(.resolveOutsideCompositor, site, file,
                     "caja mágica: se pide \(what) al contenedor fuera de un compositor; la dependencia va en el init (@Inject) o llega por Environment, y `resolve` solo lo llama el código generado por @AppCompose / @Compose") { out.append(d) }
 
+            case .locatorResolve:
+                guard !site.inCompositor, !isTestFile(file) else { continue }
+                let what = site.type.map { "'\($0)'" } ?? "una dependencia"
+                if let d = siteDiag(.locatorResolve, site, file,
+                    "service locator: `\(site.text)` pide \(what) a un global en runtime; la dependencia va en el init (sin valor por defecto que la busque) o la pasa quien compone") { out.append(d) }
+
             case .moduleStaticResolve:
                 guard let receiver = site.type else { continue }
                 if moduleExists(receiver) {
@@ -175,6 +182,7 @@ extension Validator {
 
         // 5.4: registro imperativo fuera de tests.
         for (file, reg) in dynamic where !isTestFile(file) {
+            if let allowed = reg.allowed, allowed.isEmpty || allowed.contains(LintRule.dynamicRegistration.rawValue) || allowed.contains("all") { continue }
             if let d = diag(.dynamicRegistration, file, reg.loc,
                 "`\(reg.call)(…)` registra a mano: invisible para dagger-graph y para quien lee los módulos; usa un @Module alternativo o `includes:`", config: config) { out.append(d) }
         }

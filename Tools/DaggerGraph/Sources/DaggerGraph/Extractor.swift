@@ -368,7 +368,8 @@ final class FactExtractor: SyntaxVisitor {
             type = node.arguments.first(where: { $0.label == nil && $0.expression.trimmedDescription.hasSuffix(".self") })
                 .map { TypeName.stripSelf($0.expression.trimmedDescription) }
         }
-        facts.dynamic.append(DynamicRegistration(call: call, type: type, loc: loc(node)))
+        let l = loc(node)
+        facts.dynamic.append(DynamicRegistration(call: call, type: type, loc: l, allowed: allowedRules(line: l.line)))
         return .visitChildren
     }
 
@@ -424,6 +425,8 @@ final class FactExtractor: SyntaxVisitor {
             type = Self.contextualType(of: Syntax(node))
         }
         facts.locatorRequests.append(LocatorUse(type: type, loc: loc(node), text: text))
+        // Lint 5.1 (locator-resolve): además de auditar que esté registrado, el sitio cuenta como locator.
+        lint(.locatorResolve, node, type: type)
         return true
     }
 

@@ -225,6 +225,8 @@ final class AppCompose {
 
 Generado por ti: nada. Generado por la macro: `graph`, `init() throws`, `close()`, `openSession()`,
 y dentro de `Session`: `init(parent:) throws`, `close()`, `openEditor()`, y `timeline` como fábrica.
+También `makeGraph()` e `init(graph:)`: abre el grafo sin resolver, haz algo con él (registrar un módulo
+falso en un test, instalar el puente de una migración que los `init` heredados aún consultan) y compón.
 
 ---
 
@@ -281,6 +283,9 @@ Todo esto compila. Todo esto rompe la resolución explícita.
 // ❌ En una vista, un view model, un servicio…
 let theme = try container.resolve(Theme.self)
 ```
+
+La variante clásica, `AppContainer.shared.resolve()` como valor por defecto de un `init`, es el mismo
+problema con un global delante; el linter la cuenta aparte (`locator-resolve`) para medir una migración.
 
 Es una **caja mágica**: la vista pide "lo que sea" a un diccionario en runtime. Nadie puede leer en su
 firma qué necesita, el compilador no puede comprobarlo, `dagger-graph` no sabe desde qué raíz se pide, y la
@@ -422,6 +427,7 @@ padre:
 | Regla | Sección | Por defecto |
 |---|---|---|
 | `resolve-outside-compositor` | 5.1 | error |
+| `locator-resolve` (`X.shared.resolve()`, el locator clásico) | 5.1 | warning |
 | `container-in-feature` | 5.2 | warning |
 | `module-static-resolve` | 5.3 | error |
 | `dynamic-registration` | 5.4 | warning |

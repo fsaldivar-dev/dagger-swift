@@ -323,9 +323,19 @@ struct DaggerSwiftMacrosPlugin {
             let call = fn.isThrowing
                 ? "try Self.\(fn.name)(\(callArgs))"
                 : "Self.\(fn.name)(\(callArgs))"
-            let invocation = fn.isMainActor
-                ? "try DaggerSwift.ScopeContainer.onMainActor { \(call) }"
-                : call
+            // @MainActor: los parámetros entran en un closure aislado al MainActor. Con concurrencia estricta
+            // (Swift 6) un existencial no Sendable falla con "sending … risks causing data races"; el grafo no
+            // es Sendable por diseño (ver onMainActor), así que se rebindea cada uno con nonisolated(unsafe).
+            let invocation: String
+            if fn.isMainActor {
+                let rebinds = fnParams.enumerated().map { idx, p in
+                    let pName = p.name == "_" ? "arg\(idx)" : p.name
+                    return "nonisolated(unsafe) let \(pName) = \(pName)"
+                }
+                invocation = (rebinds + ["return try DaggerSwift.ScopeContainer.onMainActor { \(call) }"]).joined(separator: "\n        ")
+            } else {
+                invocation = call
+            }
             let returnTypeSelf = fn.returnType.contains(" ") ? "(\(fn.returnType)).self" : "\(fn.returnType).self"
 
             switch fn.kind {
@@ -486,9 +496,16 @@ struct DaggerSwiftMacrosPlugin {
 
         // Tipos @MainActor: si se resuelven fuera del hilo principal se lanza `GraphError.mainActorRequired`
         // en lugar de crashear con `MainActor.assumeIsolated`.
-        let makeInstance = isMainActor
-            ? "try DaggerSwift.ScopeContainer.onMainActor { Self(\(callArgs)) }"
-            : "Self(\(callArgs))"
+        let makeInstance: String
+        if isMainActor {
+            let rebinds = initParams.enumerated().map { idx, p in
+                let pName = p.name == "_" ? "arg\(idx)" : p.name
+                return "nonisolated(unsafe) let \(pName) = \(pName)"
+            }
+            makeInstance = (rebinds + ["return try DaggerSwift.ScopeContainer.onMainActor { Self(\(callArgs)) }"]).joined(separator: "\n        ")
+        } else {
+            makeInstance = "Self(\(callArgs))"
+        }
 
         lines.append("nonisolated public static func register(in container: DaggerSwift.ScopeContainer) {")
         if let scopeArg, !scopeArg.isEmpty {
@@ -527,16 +544,29 @@ struct DaggerSwiftMacrosPlugin {
         }
         let properties = parseInjectableStoredProperties(from: clean)
         let children = parseComposeChildren(from: clean)
+        let header = clean.firstIndex(of: "{").map { String(clean[..<$0]) } ?? clean
+        let isClassType = header.contains("class ")
 
         var lines: [String] = []
         lines.append("/// Contenedor de este nivel del grafo. Lo abre el `init`; `close()` lo cierra.")
         lines.append("public let graph: DaggerSwift.ScopeContainer")
         lines.append("")
         if isRoot {
+            lines.append("/// La raíz del grafo con \(target), sin resolver nada todavía. Úsala con `init(graph:)` cuando")
+            lines.append("/// necesites hacer algo entre abrir el grafo y resolver (p. ej. instalar un puente de migración")
+            lines.append("/// que los `init` heredados aún consultan) o registrar módulos extra (tests).")
+            lines.append("public static func makeGraph() -> DaggerSwift.ScopeContainer {")
+            lines.append("    DaggerSwift.ScopeContainer.root(modules: [\(target)])")
+            lines.append("}")
+            lines.append("")
             lines.append("/// Arranque: abre la raíz con \(target) y resuelve cada propiedad. Lanza `GraphError` si falta")
             lines.append("/// algo: el único `catch` del grafo va en quien crea el compositor.")
-            lines.append("public init() throws {")
-            lines.append("    let graph = DaggerSwift.ScopeContainer.root(modules: [\(target)])")
+            lines.append("public \(isClassType ? "convenience " : "")init() throws {")
+            lines.append("    try self.init(graph: Self.makeGraph())")
+            lines.append("}")
+            lines.append("")
+            lines.append("/// Compone sobre un grafo ya abierto (`makeGraph()`, quizá con más módulos registrados).")
+            lines.append("public init(graph: DaggerSwift.ScopeContainer) throws {")
         } else {
             lines.append("/// Abre este scope bajo `parent` y resuelve cada propiedad. Lanza `GraphError` si falta algo o")
             lines.append("/// una `@Precondition` no se cumple (antes de construir nada).")

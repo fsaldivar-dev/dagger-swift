@@ -201,6 +201,17 @@ struct LintTests {
         ]
         let strict = messages(diagnostics(files))
         #expect(!strict.contains { $0.contains("[lint resolve-outside-compositor]") })
+        let bridge = messages(diagnostics(["Bridge.swift": """
+        import DaggerSwift
+        final class Bridge {
+            func install(c: ScopeContainer, t: Theme) {
+                // dagger-graph: allow dynamic-registration — puente temporal
+                c.bindInstance(t, as: Theme.self)
+                c.bindInstance(t, as: Theme.self)
+            }
+        }
+        """]))
+        #expect(bridge.filter { $0.contains("[lint dynamic-registration]") }.count == 1)
         #expect(strict.contains { $0.contains("[lint optional-try]") })
         #expect(strict.contains { $0.contains("[lint catch-outside-root]") })
         #expect(strict.contains { $0.contains("[lint container-in-feature]") })
@@ -212,6 +223,23 @@ struct LintTests {
         #expect(!relaxed.contains { $0.contains("[lint catch-outside-root]") })
         #expect(relaxed.contains { $0.contains("warning: [lint optional-try]") })
         #expect(!relaxed.contains { $0.contains("[lint container-in-feature]") })
+    }
+
+    @Test("locator-resolve: `X.shared.resolve()` cuenta como locator (5.1), también en defaults de init")
+    func locatorResolve() {
+        let d = diagnostics(["Locator.swift": """
+        import DaggerSwift
+        final class Container { static let shared = Container(); func resolve<T>() -> T { fatalError() } }
+        final class ThemeManager {}
+        final class Screen {
+            let theme: ThemeManager
+            init(theme: ThemeManager = Container.shared.resolve()) { self.theme = theme }
+            func flags() -> Bool { (Container.shared.resolve() as ThemeManager) === theme }
+        }
+        """])
+        let m = messages(d).filter { $0.contains("[lint locator-resolve]") }
+        #expect(m.count == 2)
+        #expect(m.allSatisfy { $0.contains("warning:") })
     }
 
     @Test("`Color.resolve(in:)` y otros `resolve` ajenos no cuentan; sin lint no hay hallazgos")

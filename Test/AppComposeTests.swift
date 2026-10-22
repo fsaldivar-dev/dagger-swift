@@ -78,6 +78,15 @@ struct AppComposeTests {
         #expect(house.label == "no se pide al grafo")
     }
 
+    @Test("makeGraph() + init(graph:): se puede actuar sobre el grafo antes de resolver")
+    func composeOverExistingGraph() throws {
+        let graph = ComposeHouse.makeGraph()
+        graph.bindInstance(ComposeAuth(), as: ComposeAuth.self)      // p. ej. un puente de migración o un fake
+        let house = try ComposeHouse(graph: graph)
+        #expect(house.graph === graph)
+        #expect(house.auth === (try graph.resolve(ComposeAuth.self)))
+    }
+
     @Test("Sin sesión, openSession() lanza unmetPrecondition sin construir nada")
     func sessionBlocked() throws {
         let house = try ComposeHouse()

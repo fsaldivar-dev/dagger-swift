@@ -33,6 +33,18 @@ enum MainActorAppModule {
     /// `nonisolated` dentro de un módulo @MainActor: se construye sin saltar al MainActor.
     @Provider
     nonisolated static func greeting() -> String { "hola" }
+
+    /// Parámetro existencial NO Sendable que entra al closure @MainActor: con concurrencia estricta
+    /// fallaba con "sending … risks causing data races" (Firefox, AppSessionProvider).
+    @Singleton
+    static func toastCount(toasts: any MainActorModuleToasts) -> Int { toasts is MainActorModuleToastCenter ? 1 : 0 }
+}
+
+/// @Inject @MainActor con la misma dependencia no Sendable por init.
+@MainActor
+@Inject
+final class MainActorModuleScreen {
+    let toasts: any MainActorModuleToasts
 }
 
 @Suite("@Module @MainActor")
@@ -55,6 +67,10 @@ struct MainActorModuleTests {
         _ = try graph.resolve((any MainActorModuleToasts).self)
         #endif
         #expect(try graph.resolve(String.self) == "hola")
+        #if canImport(Darwin)
+        #expect(try graph.resolve(Int.self) == 1)
+        _ = try graph.resolve(MainActorModuleScreen.self)
+        #endif
     }
 
     @Test("Desde background: mainActorRequired (o resolveOnMainActor)")

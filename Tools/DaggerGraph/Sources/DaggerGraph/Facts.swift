@@ -78,6 +78,8 @@ struct DynamicRegistration: Codable, Sendable {
     var call: String
     var type: String?
     var loc: Loc
+    /// `// dagger-graph: allow …` en la línea o la anterior (ver `LintSite.allowed`).
+    var allowed: [String]? = nil
 }
 
 /// Una raíz de composición escrita en el código: qué módulos arman un grafo concreto.
@@ -144,6 +146,8 @@ struct LintSite: Codable, Sendable {
     enum Kind: String, Codable, Sendable {
         /// `x.resolve(T.self)` sobre un contenedor (5.1).
         case resolveCall
+        /// `X.shared.resolve()`: service locator (5.1, variante `locator-resolve`).
+        case locatorResolve
         /// `Tipo.resolve(T.self)` estático (5.3 si `Tipo` es un @Module).
         case moduleStaticResolve
         /// `ScopeContainer` como tipo de parámetro o propiedad (5.2).
