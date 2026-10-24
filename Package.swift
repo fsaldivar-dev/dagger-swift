@@ -6,7 +6,9 @@ import CompilerPluginSupport
 
 let package = Package(
     name: "DaggerSwift",
-    platforms: [.macOS(.v14), .iOS(.v17), .tvOS(.v17), .watchOS(.v10), .macCatalyst(.v17)],
+    // Mínimos reales del runtime (parameter packs en funciones se pueden usar desde iOS 13; nada requiere iOS 17).
+    // Bajarlos desbloquea apps que soportan iOS 15/16 (p. ej. Firefox for iOS).
+    platforms: [.macOS(.v12), .iOS(.v15), .tvOS(.v15), .watchOS(.v8), .visionOS(.v1), .macCatalyst(.v15)],
     products: [
         .library(
             name: "DaggerSwift",
@@ -29,10 +31,19 @@ let package = Package(
             path: "Sources/DaggerSwiftMacros"
         ),
 
-        // Biblioteca que expone el motor del grafo y las macros como parte de su API
+        // Runtime puro (motor del grafo, scopes, SwiftUI). En los tags de release este target
+        // se sustituye por un `.binaryTarget` (XCFramework) — ver scripts/release-dry-run.sh.
+        .target(
+            name: "DaggerSwiftCore",
+            dependencies: [],
+            path: "Sources/DaggerSwiftCore"
+        ),
+
+        // Target fuente delgado: declaraciones de macros + `@_exported import DaggerSwiftCore`.
+        // Las macros no pueden ser binarias en SwiftPM, así que esto siempre compila desde fuente.
         .target(
             name: "DaggerSwift",
-            dependencies: ["DaggerSwiftMacros"],
+            dependencies: ["DaggerSwiftCore", "DaggerSwiftMacros"],
             path: "Sources/DaggerSwift"
         ),
 
@@ -48,6 +59,13 @@ let package = Package(
             name: "DaggerCLI",
             dependencies: ["DaggerSwift"],
             path: "Sources/DaggerCLI"
+        ),
+
+        // Tests de expansión de las macros: llaman al plugin con mensajes del protocolo (sin swift-syntax).
+        .testTarget(
+            name: "DaggerSwiftMacrosTests",
+            dependencies: ["DaggerSwiftMacros"],
+            path: "MacroTests"
         ),
 
         // Target de pruebas para validar las macros y el motor de grafo (v1 y v2)

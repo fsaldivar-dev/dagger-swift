@@ -1,0 +1,99 @@
+# CI de desarrollo: todo desde FUENTE (código + compilación siempre).
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: DaggerSwift (build + test)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - run: swift --version
+      - name: Build
+        run: swift build
+      - name: Test
+        run: swift test
+
+  linux:
+    name: DaggerSwift en Linux (build + test)
+    runs-on: ubuntu-latest
+    container: swift:6.1
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift --version
+      - name: Build
+        run: swift build
+      - name: Test
+        run: swift test
+
+  sample:
+    name: SampleProyect (build + test)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - name: Test
+        run: swift test --package-path Sources/SampleProyect
+
+  benchmarks:
+    name: Benchmarks (build + test)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - uses: actions/cache@v4
+        with:
+          path: Benchmarks/.build
+          key: benchmarks-${{ runner.os }}-${{ hashFiles('Benchmarks/Package.swift') }}
+      - name: Build
+        run: swift build --build-tests --package-path Benchmarks
+      - name: Test
+        run: swift test --package-path Benchmarks
+
+  graph:
+    name: dagger-graph (validación del grafo)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      # swift-syntax compila en ~12 s en debug; el caché lo evita en la mayoría de corridas.
+      - uses: actions/cache@v4
+        with:
+          path: Tools/DaggerGraph/.build
+          key: dagger-graph-${{ runner.os }}-${{ hashFiles('Tools/DaggerGraph/Package.swift', 'Tools/DaggerGraph/Sources/**') }}
+          restore-keys: dagger-graph-${{ runner.os }}-
+      - name: Build dagger-graph
+        run: swift build --package-path Tools/DaggerGraph
+      - name: Validar grafo (falla si hay errores)
+        run: |
+          "$(swift build --package-path Tools/DaggerGraph --show-bin-path)/dagger-graph" \
+            --timings --no-cache Sources/SampleProyect Benchmarks
+      - name: Código generado al día (dagger-graph generate)
+        run: |
+          scripts/generate-graphs.sh
+          GEN="Benchmarks/Tests/DIFrameworksDebateTests/Generated Sources/SampleProyect/Tests/AppGraphTests/Generated Test/NestedFixture/Generated"
+          if [ -n "$(git status --porcelain -- $GEN)" ]; then
+            git status --porcelain -- $GEN
+            echo "::error::El código generado está desactualizado: corre scripts/generate-graphs.sh y commitea."
+            exit 1
+          fi

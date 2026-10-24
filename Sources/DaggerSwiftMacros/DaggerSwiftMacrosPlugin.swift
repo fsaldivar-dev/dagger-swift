@@ -79,12 +79,53 @@ struct DaggerSwiftMacrosPlugin {
 
     // MARK: - Dispatcher de Macros
 
-    private static func handleExpandAttachedMacro(_ payload: [String: Any]) -> [String: Any] {
+    // MARK: - Diagnósticos (campo `diagnostics` del protocolo del plugin)
+
+    /// Diagnósticos de la expansión en curso (un mensaje a la vez: el plugin es secuencial).
+    nonisolated(unsafe) private static var pendingDiagnostics: [[String: Any]] = []
+    nonisolated(unsafe) private static var currentDecl: (source: String, fileName: String, offset: Int)?
+
+    /// Emite un error del compilador apuntando a `needle` dentro de la declaración (o a su inicio).
+    static func diagnose(_ message: String, at needle: String?) {
+        guard let decl = currentDecl else { return }
+        var offset = decl.offset
+        if let needle, let range = decl.source.range(of: needle) {
+            offset += decl.source.utf8.distance(from: decl.source.startIndex, to: range.lowerBound)
+        }
+        pendingDiagnostics.append([
+            "message": message,
+            "severity": "error",
+            "position": ["fileName": decl.fileName, "offset": offset],
+            "highlights": [] as [Any],
+            "notes": [] as [Any],
+            "fixIts": [] as [Any],
+        ])
+    }
+
+    /// El estado de diagnósticos es por expansión: se serializan (el compilador ya manda un mensaje a la
+    /// vez; el lock protege usos concurrentes, p. ej. tests en paralelo).
+    private static let expansionLock = NSLock()
+
+    static func handleExpandAttachedMacro(_ payload: [String: Any]) -> [String: Any] {
+        expansionLock.lock()
+        defer { expansionLock.unlock() }
+        return expandAttachedMacroLocked(payload)
+    }
+
+    private static func expandAttachedMacroLocked(_ payload: [String: Any]) -> [String: Any] {
         let macroInfo = payload["macro"] as? [String: Any]
         let typeName = (macroInfo?["typeName"] as? String) ?? ""
         let macroRole = (payload["macroRole"] as? String) ?? ""
         let attrSource = ((payload["attributeSyntax"] as? [String: Any])?["source"] as? String) ?? ""
-        let declSource = ((payload["declSyntax"] as? [String: Any])?["source"] as? String) ?? ""
+        let declSyntax = payload["declSyntax"] as? [String: Any]
+        let declSource = (declSyntax?["source"] as? String) ?? ""
+        let declLocation = declSyntax?["location"] as? [String: Any]
+        pendingDiagnostics = []
+        currentDecl = (
+            declSource,
+            (declLocation?["fileName"] as? String) ?? "",
+            (declLocation?["offset"] as? Int) ?? 0
+        )
         let extendedType = ((payload["extendedTypeSyntax"] as? [String: Any])?["source"] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
@@ -132,7 +173,7 @@ struct DaggerSwiftMacrosPlugin {
         }
 
         var resultDict: [String: Any] = [
-            "diagnostics": [] as [Any]
+            "diagnostics": pendingDiagnostics
         ]
         if let expanded, !expanded.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             resultDict["expandedSource"] = expanded
@@ -225,7 +266,11 @@ struct DaggerSwiftMacrosPlugin {
         let moduleVersion = extractModuleVersion(from: attrSource)
         let moduleScope = extractModuleScope(from: attrSource)
         let includedModules = extractModuleIncludes(from: attrSource)
-        let functions = parseModuleFunctions(from: clean)
+        // Módulo @MainActor (p. ej. objetos @Observable de SwiftUI): sus funciones están aisladas al
+        // MainActor y el closure de register(in:) no lo está → se construyen vía ScopeContainer.onMainActor.
+        let moduleHeader = clean.firstIndex(of: "{").map { String(clean[..<$0]) } ?? clean
+        let moduleIsMainActor = moduleHeader.contains("@MainActor")
+        let functions = parseModuleFunctions(from: clean, moduleIsMainActor: moduleIsMainActor)
 
         var lines: [String] = []
         lines.append("nonisolated public static let moduleVersion: String = \"\(moduleVersion)\"")
@@ -244,17 +289,18 @@ struct DaggerSwiftMacrosPlugin {
         for fn in functions {
             let closureParams: String
             let callArgs: String
+            let fnParams = fn.parameters.filter { !$0.hasDefault }
 
-            if fn.parameters.isEmpty {
+            if fnParams.isEmpty {
                 closureParams = ""
                 callArgs = ""
             } else {
-                let paramDecls = fn.parameters.enumerated().map { idx, p in
+                let paramDecls = fnParams.enumerated().map { idx, p in
                     let pName = p.name == "_" ? "arg\(idx)" : p.name
                     return "\(pName): \(p.type)"
                 }.joined(separator: ", ")
                 closureParams = "(\(paramDecls)) in"
-                callArgs = fn.parameters.enumerated().map { idx, p in
+                callArgs = fnParams.enumerated().map { idx, p in
                     let pName = p.name == "_" ? "arg\(idx)" : p.name
                     if p.externalLabel == "_" {
                         return pName
@@ -264,9 +310,12 @@ struct DaggerSwiftMacrosPlugin {
                 }.joined(separator: ", ")
             }
 
-            let invocation = fn.isThrowing
+            let call = fn.isThrowing
                 ? "try Self.\(fn.name)(\(callArgs))"
                 : "Self.\(fn.name)(\(callArgs))"
+            let invocation = fn.isMainActor
+                ? "try DaggerSwift.ScopeContainer.onMainActor { \(call) }"
+                : call
             let returnTypeSelf = fn.returnType.contains(" ") ? "(\(fn.returnType)).self" : "\(fn.returnType).self"
 
             switch fn.kind {
@@ -334,8 +383,17 @@ struct DaggerSwiftMacrosPlugin {
         let clean = stripComments(declSource)
         let scopeArg = extractInjectScopeArgument(from: attrSource)
         let hasExplicitInit = containsExplicitInitializer(in: clean)
+        if hasExplicitInit, explicitInitIsAsync(in: clean) {
+            diagnose(
+                "@Inject: el init no puede ser async; el grafo construye de forma síncrona. Usa un init síncrono y mueve el trabajo asíncrono a un método",
+                at: "init("
+            )
+            // Solo el stub de la conformancia: evita errores en cascada ('async' call...) sobre el diagnóstico.
+            return "nonisolated public static func register(in container: DaggerSwift.ScopeContainer) {}"
+        }
         let properties = parseInjectableStoredProperties(from: clean)
-        let initParams = hasExplicitInit ? parseExplicitInitParameters(from: clean) : properties
+        // Parámetros con valor por defecto (`retries: Int = 3`) no se piden al grafo: se usa el default.
+        let initParams = (hasExplicitInit ? parseExplicitInitParameters(from: clean) : properties).filter { !$0.hasDefault }
 
         var lines: [String] = []
 
@@ -349,8 +407,11 @@ struct DaggerSwiftMacrosPlugin {
             lines.append("")
         }
 
-        let isClassType = clean.contains("class ")
-        let isMainActor = clean.contains("@MainActor")
+        // Solo el encabezado del tipo (atributos + `class/struct/actor Nombre: ...`) decide el aislamiento:
+        // un miembro `@MainActor private var x` NO hace al tipo @MainActor.
+        let header = clean.firstIndex(of: "{").map { String(clean[..<$0]) } ?? clean
+        let isClassType = header.contains("class ")
+        let isMainActor = header.contains("@MainActor")
         let initModifier = isClassType ? "public convenience init" : "public init"
         let resolveArgs = initParams.map { p in
             let label = p.externalLabel == "_" ? "" : "\(p.externalLabel): "
@@ -384,7 +445,11 @@ struct DaggerSwiftMacrosPlugin {
             }.joined(separator: ", ")
         }
 
-        let makeInstance = isMainActor ? "MainActor.assumeIsolated { Self(\(callArgs)) }" : "Self(\(callArgs))"
+        // Tipos @MainActor: si se resuelven fuera del hilo principal se lanza `GraphError.mainActorRequired`
+        // en lugar de crashear con `MainActor.assumeIsolated`.
+        let makeInstance = isMainActor
+            ? "try DaggerSwift.ScopeContainer.onMainActor { Self(\(callArgs)) }"
+            : "Self(\(callArgs))"
 
         lines.append("nonisolated public static func register(in container: DaggerSwift.ScopeContainer) {")
         if let scopeArg, !scopeArg.isEmpty {
@@ -413,12 +478,24 @@ struct DaggerSwiftMacrosPlugin {
         case provider
         case businessRule
         case precondition(String?)
+
+        var attributeName: String {
+            switch self {
+            case .singleton: return "@Singleton"
+            case .scoped: return "@Scoped"
+            case .provider: return "@Provider"
+            case .businessRule: return "@BusinessRule"
+            case .precondition: return "@Precondition"
+            }
+        }
     }
 
     private struct ParsedParam {
         let externalLabel: String
         let name: String
         let type: String
+        /// `x: Int = 3`: el grafo NO lo resuelve; se usa el valor por defecto.
+        var hasDefault: Bool = false
     }
 
     private struct ParsedFunction {
@@ -427,6 +504,8 @@ struct DaggerSwiftMacrosPlugin {
         let parameters: [ParsedParam]
         let returnType: String
         let isThrowing: Bool
+        /// `@MainActor` en la función (o en el módulo, salvo `nonisolated`): se construye vía onMainActor.
+        var isMainActor: Bool = false
     }
 
     private static func stripComments(_ source: String) -> String {
@@ -590,7 +669,7 @@ struct DaggerSwiftMacrosPlugin {
         return String(afterColon[..<endIdx]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private static func parseModuleFunctions(from source: String) -> [ParsedFunction] {
+    private static func parseModuleFunctions(from source: String, moduleIsMainActor: Bool = false) -> [ParsedFunction] {
         let body = extractOuterBracesBody(from: source)
         var results: [ParsedFunction] = []
 
@@ -610,21 +689,38 @@ struct DaggerSwiftMacrosPlugin {
             let params = parseParameterList(paramsString)
 
             let afterParams = String(afterFunc[afterFunc.index(after: closeParen)...])
-            guard let arrowRange = afterParams.range(of: "->") else { continue }
+            guard let arrowRange = afterParams.range(of: "->") else {
+                diagnose(
+                    "\(kind.attributeName) '\(funcName)()' necesita un tipo de retorno (-> Tipo): el grafo registra cada función por el tipo que devuelve",
+                    at: "func \(funcName)"
+                )
+                continue
+            }
             let beforeArrow = String(afterParams[..<arrowRange.lowerBound])
             let isThrowing = beforeArrow.contains("throws")
+            if beforeArrow.contains("async") {
+                diagnose(
+                    "\(kind.attributeName) '\(funcName)()' no puede ser async: el grafo construye las dependencias de forma síncrona. Hazla síncrona, o resuelve el valor asíncrono fuera del grafo (p. ej. en el Coordinator) y pásalo con bindInstance",
+                    at: "func \(funcName)"
+                )
+                continue
+            }
 
             let afterArrow = String(afterParams[arrowRange.upperBound...])
             let returnEnd = afterArrow.firstIndex(of: "{") ?? afterArrow.endIndex
             let returnType = String(afterArrow[..<returnEnd]).trimmingCharacters(in: .whitespacesAndNewlines)
 
+            let funcHeader = String(decl[..<funcRange.lowerBound])
+            let isMainActor = funcHeader.contains("@MainActor")
+                || (moduleIsMainActor && !funcHeader.contains("nonisolated"))
             results.append(
                 ParsedFunction(
                     kind: kind,
                     name: funcName,
                     parameters: params,
                     returnType: returnType,
-                    isThrowing: isThrowing
+                    isThrowing: isThrowing,
+                    isMainActor: isMainActor
                 )
             )
         }
@@ -676,6 +772,19 @@ struct DaggerSwiftMacrosPlugin {
         }
     }
 
+    private static func explicitInitIsAsync(in source: String) -> Bool {
+        let body = extractOuterBracesBody(from: source)
+        for d in splitTopLevelDeclarations(in: body) {
+            guard let initRange = d.range(of: "init(") else { continue }
+            let fromParen = String(d[d.index(before: initRange.upperBound)...])
+            guard let close = findMatchingParen(in: fromParen, from: fromParen.startIndex) else { continue }
+            let afterParams = fromParen[fromParen.index(after: close)...]
+            let header = afterParams.prefix { $0 != "{" }
+            return header.contains("async")
+        }
+        return false
+    }
+
     private static func parseExplicitInitParameters(from source: String) -> [ParsedParam] {
         let body = extractOuterBracesBody(from: source)
         let decls = splitTopLevelDeclarations(in: body)
@@ -713,14 +822,25 @@ struct DaggerSwiftMacrosPlugin {
                 continue
             }
             let afterKeyword = String(trimmed[range.upperBound...])
-            guard let colon = afterKeyword.firstIndex(of: ":") else { continue }
-            let propName = String(afterKeyword[..<colon]).trimmingCharacters(in: .whitespacesAndNewlines)
-            var propType = String(afterKeyword[afterKeyword.index(after: colon)...])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if propType.hasPrefix("@escaping ") {
-                propType = String(propType.dropFirst("@escaping ".count))
+            // `let a, b: Int` (ambos Int) y `let a: Int, b: String` (cada uno con su tipo).
+            var pendingNames: [String] = []
+            for part in splitByTopLevelComma(afterKeyword) {
+                let piece = part.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard let colon = piece.firstIndex(of: ":") else {
+                    if !piece.isEmpty { pendingNames.append(piece) }
+                    continue
+                }
+                let propName = String(piece[..<colon]).trimmingCharacters(in: .whitespacesAndNewlines)
+                var propType = String(piece[piece.index(after: colon)...])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if propType.hasPrefix("@escaping ") {
+                    propType = String(propType.dropFirst("@escaping ".count))
+                }
+                for name in pendingNames + [propName] {
+                    props.append(ParsedParam(externalLabel: name, name: name, type: propType))
+                }
+                pendingNames.removeAll()
             }
-            props.append(ParsedParam(externalLabel: propName, name: propName, type: propType))
         }
         return props
     }
@@ -734,9 +854,11 @@ struct DaggerSwiftMacrosPlugin {
             let lhs = String(trimmed[..<colon]).trimmingCharacters(in: .whitespacesAndNewlines)
             var rhs = String(trimmed[trimmed.index(after: colon)...]).trimmingCharacters(in: .whitespacesAndNewlines)
 
-            // Quitar valor por defecto si existe
+            // Quitar valor por defecto si existe (y recordarlo: ese parámetro no se resuelve del grafo)
+            var hasDefault = false
             if let eq = rhs.firstIndex(of: "=") {
                 rhs = String(rhs[..<eq]).trimmingCharacters(in: .whitespacesAndNewlines)
+                hasDefault = true
             }
             if rhs.hasPrefix("@escaping ") {
                 rhs = String(rhs.dropFirst("@escaping ".count)).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -745,7 +867,7 @@ struct DaggerSwiftMacrosPlugin {
             let nameTokens = lhs.split(whereSeparator: { $0.isWhitespace }).map(String.init)
             let externalLabel = nameTokens.first ?? "_"
             let internalName = nameTokens.last ?? externalLabel
-            params.append(ParsedParam(externalLabel: externalLabel, name: internalName, type: rhs))
+            params.append(ParsedParam(externalLabel: externalLabel, name: internalName, type: rhs, hasDefault: hasDefault))
         }
         return params
     }

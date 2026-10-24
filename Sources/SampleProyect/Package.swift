@@ -15,7 +15,9 @@ let package = Package(
         .library(name: "SampleProyect", targets: ["SampleProyect"]),
     ],
     dependencies: [
-        .package(name: "DaggerSwift", path: "../../")
+        .package(name: "DaggerSwift", path: "../../"),
+        // Validación del grafo en cada build (build-tool plugin; en main usa dagger-graph desde fuente).
+        .package(name: "DaggerGraph", path: "../../Tools/DaggerGraph"),
     ],
     targets: [
         // 1. Foundation: Entidades compartidas y Design System
@@ -82,7 +84,8 @@ let package = Package(
                 "Features",
                 "MultiCountryNewsDemo",
                 "FintechMockupDemo"
-            ]
+            ],
+            plugins: [.plugin(name: "DaggerGraphBuildPlugin", package: "DaggerGraph")]
         ),
 
         // Target de Test 1: Pruebas Unitarias de la App (UseCases y ViewModels)

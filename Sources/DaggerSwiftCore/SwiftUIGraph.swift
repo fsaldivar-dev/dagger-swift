@@ -6,6 +6,7 @@
 //
 
 #if canImport(SwiftUI)
+import Combine
 import SwiftUI
 
 /// Objeto retenido por `@StateObject` / `@State` dentro de `GraphScopeView` que garantiza:

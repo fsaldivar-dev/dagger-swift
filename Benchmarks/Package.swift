@@ -25,8 +25,8 @@ let package = Package(
         .testTarget(
             name: "DIFrameworksDebateTests",
             dependencies: [
-                .product(name: "DaggerSwift", package: "SwiftDager"),
-                .product(name: "DaggerSwiftTesting", package: "SwiftDager"),
+                .product(name: "DaggerSwift", package: "dagger-swift"),
+                .product(name: "DaggerSwiftTesting", package: "dagger-swift"),
                 .product(name: "Dependencies", package: "swift-dependencies"),
                 .product(name: "Factory", package: "Factory"),
                 .product(name: "Swinject", package: "Swinject"),

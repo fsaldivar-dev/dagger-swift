@@ -11,6 +11,10 @@
 //
 
 import Foundation
+#if canImport(FoundationNetworking)
+// En Linux URLSession/URLRequest viven en FoundationNetworking.
+import FoundationNetworking
+#endif
 import DaggerSwift
 
 // MARK: - 1. Modelos de Dominio

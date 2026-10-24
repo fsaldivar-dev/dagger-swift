@@ -4,6 +4,11 @@
 
 Motor híbrido de **Resolución Explícita en Tiempo de Compilación (`@Module`, `@Scope`, `@Inject`)** y **Grafo Jerárquico de Dependencias (`@BusinessRule`, `@Precondition`, `teardownScope()`)** para Swift 6, SwiftUI, UIKit y Actores de Concurrencia.
 
+> **Qué es compile-time y qué es runtime (honesto):** las macros (`@Module`, `@Inject`, …) generan código
+> al compilar, pero **resolver** el grafo (`resolve`) ocurre en runtime. La validación del grafo en compilación
+> (bindings faltantes, ciclos, scopes no abiertos) la hace la herramienta **`dagger-graph`** (CLI o build plugin),
+> y `dagger-graph generate` puede reemplazar `resolve` por factories directas. Ver [§6](#6--compile-time-vs-runtime-qué-valida-cada-capa).
+
 > 📘 **[Leer el Libro Completo: Resolución Explícita vs. Dinámica, Comparativa contra Otras Librerías y Benchmarks](./LIBRO_INYECCION_Y_BENCHMARKS.md)**
 
 ---
@@ -24,6 +29,11 @@ Motor híbrido de **Resolución Explícita en Tiempo de Compilación (`@Module`,
    - [3.3 Nivel 3: Linter Automático de Arquitectura y SOLID](#33-nivel-3-linter-automático-de-arquitectura-y-solid)
 4. **[Benchmarks y Comparativa contra Otras Librerías](#4--benchmarks-y-comparativa-contra-otras-librerías)**
 5. **[Demos Reales Incluidas (`SampleProyect`) y Estructura del Repositorio](#5--demos-reales-incluidas-sampleproyect-y-estructura-del-repositorio)**
+6. **[Compile-time vs runtime: qué valida cada capa](#6--compile-time-vs-runtime-qué-valida-cada-capa)**
+7. **[Herramientas: `dagger-graph` (CLI, plugin, `generate`, manifiestos)](#7--herramientas-dagger-graph-cli-plugin-generate-manifiestos)**
+8. **[Distribución: dev desde fuente, release como binario](#8--distribución-dev-desde-fuente-release-como-binario)**
+9. **[Errores del grafo y el patrón Coordinator](#9--errores-del-grafo-y-el-patrón-coordinator)**
+10. **[Notas de versión (borrador v2.1.0)](#10--notas-de-versión-borrador-v210)**
 
 ---
 
@@ -830,32 +840,35 @@ swift test --package-path Benchmarks
 
 ### 4.1 Gráfico Visual de Rendimiento (10,000 Resoluciones Reales en Apple Silicon)
 
+Medido en release (M-series, Swift 6.3.3) con el motor actual:
+
 ```text
-╔══════════════════════════════════════════════════════════════════════════════════════════════╗
-║     🥊 DEBATE EMPÍRICO Y BENCHMARK REAL (10,000 RESOLUCIONES EN PAQUETE SPM DEDICADO)        ║
-╠══════════════════════════════════════════════════════════════════════════════════════════════╣
-║ TIEMPO DE EJECUCIÓN ORDENADO (Menor barra = Más rápido):                                     ║
-  1. DaggerSwift Explícito (@Module/@Scope) |   1.34 ms (  1.0x) |█
-  2. Point-Free swift-dependencies (TCA)    |  11.23 ms (  8.4x) |██████
-  3. DaggerSwift Motor DAG (ScopeContainer) |  19.18 ms ( 14.4x) |███████████
-  4. Swinject (Dynamic Dictionary)          |  20.50 ms ( 15.3x) |████████████
-  5. Factory (Container.shared)             |  48.15 ms ( 36.0x) |██████████████████████████████
-╚══════════════════════════════════════════════════════════════════════════════════════════════╝
+  1. DaggerSwift Explícito (@Module/@Scope) |   0.27 ms (  1.0x)   ← ver advertencia
+  2. Point-Free swift-dependencies (TCA)    |   3.82 ms ( 14.0x)
+  3. DaggerSwift Motor DAG (ScopeContainer) |   7.95 ms ( 29.2x)
+  4. Swinject (Dynamic Dictionary)          |  11.32 ms ( 41.6x)
+  5. Factory (Container.shared)             |  12.12 ms ( 44.6x)
 ```
 
-```mermaid
-xychart-beta
-    title "Tiempo de 10,000 Resoluciones en ms (Menor es Mejor)"
-    x-axis ["DaggerSwift Explícito", "Point-Free (TCA)", "DaggerSwift DAG", "Swinject", "Factory"]
-    y-axis "Milisegundos (ms)" 0 --> 55
-    bar [1.34, 11.23, 19.18, 20.50, 48.15]
+> ⚠️ **Advertencia de honestidad:** el "Explícito" de este round llama funciones del módulo que crean un repositorio
+> y un cliente **nuevos en cada iteración** (no hay caché ni búsqueda), así que no mide lo mismo que un contenedor.
+> La comparación justa es el **Round 4** (misma semántica: `@Singleton` real, `@Scoped` cacheado, use case transient):
+
+```text
+  A mano (misma semántica)            |  0.06 ms  (piso teórico)
+  Generado (dagger-graph generate)    |  0.19–0.22 ms  (con lock: thread-safe)
+  Motor DAG (ScopeContainer.resolve)  |  7.3–10 ms
+  Arranque en frío ×1000 (construir grafo + 1ª resolución): DAG ~11 ms · generado ~0.12 ms
 ```
+
+Fuente: `Benchmarks/Tests/DIFrameworksDebateTests/SameSemanticsBenchmarkTests.swift`
+(`swift test -c release --package-path Benchmarks --filter SameSemantics`).
 
 ### Matriz Comparativa de Capacidades
 
 | Capacidad Arquitectónica | Swinject | Factory | Point-Free `swift-dependencies` (TCA) | **DaggerSwift v2** |
 | :--- | :---: | :---: | :---: | :---: |
-| **Verificación en Tiempo de Compilación** | ❌ No (`nil` en Runtime) | ⚠️ Parcial | ⚠️ Falla en Runtime si falta `testValue` | **✅ Sí (`@Module` Contracts + `@Scope`)** |
+| **Verificación en Tiempo de Compilación** | ❌ No (`nil` en Runtime) | ⚠️ Parcial | ⚠️ Falla en Runtime si falta `testValue` | **✅ Con `dagger-graph` (plugin/CI): faltantes, ciclos y scopes por raíz. Sin él, solo en runtime** |
 | **Cero contaminación en `Domain` (`init` puro)** | ❌ `resolver.resolve` | ❌ `@Injected` | ❌ `@Dependency` dentro de `Domain` | **✅ Sí (`@Inject` genera `init` limpio)** |
 | **Variantes de Producto (Multi-Country/Versiones) sin Naming Layers** | ❌ No (Parche con `name:` String) | ❌ No (Muta contenedor global) | ⚠️ Solo en Tests (`withDependencies`) | **✅ Sí (Nativo con `@Module` + `@Scope`)** |
 | **Nodos `@Precondition` (Cortocircuito de Sesión)** | ❌ No existe | ❌ No existe | ❌ No existe | **✅ Sí (`@Precondition` nativo, 0 allocs)** |
@@ -947,21 +960,112 @@ En `DaggerSwift`, indexamos estrictamente por tipo (`TypeKey` / `ObjectIdentifie
     └── GraphEngineV2Tests.swift         # Pruebas de motor DAG, Scopes, Preconditions y Retain Cycles
 ```
 
+
+---
+
+## 6. 🔍 Compile-time vs runtime: qué valida cada capa
+
+| Capa | Cuándo | Qué detecta / hace |
+|---|---|---|
+| Macros (`@Module`, `@Inject`, …) | Compilación | Generan `register(in:)`, `init` limpio, `init(from:)`. **No** validan el grafo. |
+| `dagger-graph` (CLI / build plugin) | Compilación / CI | Bindings faltantes (global y **por raíz**), ciclos (con la cadena completa), `@Singleton` que depende de un scope hijo, **`scopeNotActive` estático** (pedir un `@Scoped(X)` desde una raíz que nunca abre X). Listas de módulos no literales → warning. |
+| `dagger-graph generate` | Compilación (opt-in) | Factories tipadas directas por raíz: sin `resolve`, sin diccionarios. |
+| Tests de humo generados | Tests / CI | Cada raíz literal se arma con el **runtime real** y resuelve cada binding. |
+| `ScopeContainer` (runtime) | Ejecución | Red de seguridad: vuelve a detectar todo lo anterior + errores de **estado** (`unmetPrecondition`, `scopeClosed`). |
+
+Lo que **no** se puede validar estáticamente: raíces con listas no literales, `bindInstance`/`provide*` imperativos,
+composición dinámica (`CountryNewsScope.module(for:)`), y tipos comparados por texto (typealias, genéricos complejos).
+Para eso queda el runtime y los tests de humo.
+
+## 7. 🧰 Herramientas: `dagger-graph` (CLI, plugin, `generate`, manifiestos)
+
+Vive en [`Tools/DaggerGraph`](./Tools/DaggerGraph) (paquete separado: `DaggerSwift` sigue con 0 dependencias).
+Detalle y mediciones: [`Tools/DaggerGraph/SPIKE.md`](./Tools/DaggerGraph/SPIKE.md).
+
+```bash
+# Validar (diagnósticos archivo:línea:col; exit 1 si hay errores)
+swift run -c release --package-path Tools/DaggerGraph dagger-graph --timings Sources/SampleProyect Benchmarks
+
+# Regenerar el código generado y los tests de humo del repo
+scripts/generate-graphs.sh
+
+# Multi-paquete (prototipo): publicar y unir manifiestos de grafo
+dagger-graph manifest --name ServicesKit --out ServicesKit.json Sources/Services
+dagger-graph --manifest ServicesKit.json Sources/Features
+```
+
+Build plugin (valida en cada build; +24–27 ms por build medido en SampleProyect):
+
+```swift
+.target(name: "App", plugins: [.plugin(name: "DaggerGraphBuildPlugin", package: "DaggerGraph")])
+```
+
+Costos medidos (Apple Silicon): repo completo en frío ~15 ms, sin cambios ~5 ms, 1 archivo editado ~9 ms.
+
+## 8. 📦 Distribución: dev desde fuente, release como binario
+
+- **`main` / desarrollo:** todo desde fuente (`swift build`, CI en cada PR: [`ci.yml`](./.github/workflows/ci.yml)).
+- **Release (botón manual):** Actions → Release → *Run workflow* con la versión (`v2.1.0`, o `v2.1.0-rc.1` para
+  pre-release). [`release.yml`](./.github/workflows/release.yml) prueba, construye y verifica (macOS + iOS Simulator),
+  publica `DaggerSwiftCore.xcframework` (el runtime) y `dagger-graph.artifactbundle`, y crea el tag sobre un commit
+  cuyo `Package.swift` usa `binaryTarget(url:checksum:)`. El tag nace al publicar: nunca existe sin sus binarios
+  y nunca se mueve.
+  Las **macros siguen en fuente** (SwiftPM no admite macros binarias): `DaggerSwift` es un target delgado con las
+  declaraciones de macros + `@_exported import DaggerSwiftCore`. En Linux el manifiesto cae a fuente.
+- Ensayo local completo, sin publicar nada: `scripts/release-dry-run.sh`.
+- Medido: build limpio de un consumidor ~5 s con fuente o binario (el runtime es chico); la ganancia grande es
+  `dagger-graph` como artifactbundle (1.4 s vs. 150+ s compilando swift-syntax).
+
+## 9. 🚦 Errores del grafo y el patrón Coordinator
+
+Los errores de resolución se manejan en **un solo `catch`, en el Coordinator**:
+`GraphError.isProgrammerError` → reportar + pantalla de respaldo; `unmetPrecondition` / `scopeClosed` → navegación.
+En debug los errores de programación truenan (`ScopeContainer.programmerErrorPolicy = .assertInDebug`).
+Guía completa con ejemplo: [`docs/COORDINATOR.md`](./docs/COORDINATOR.md).
+
+## 10. 📝 Notas de versión (borrador v2.1.0)
+
+**Cambios que pueden requerir ajustes**
+- `GraphError` tiene dos casos nuevos: `.mainActorRequired` y `.scopeClosed`. Un `switch` exhaustivo sin `default`
+  deja de compilar: agrega los casos o un `default`.
+- El paquete se partió en `DaggerSwiftCore` (runtime) + `DaggerSwift` (macros). La API pública es la misma
+  (`import DaggerSwift` sigue funcionando); los nombres de tipos del runtime en snapshots pasan a `DaggerSwiftCore.X`.
+- **Después de actualizar, haz un build limpio:** SwiftPM no recompila los archivos que usan macros cuando cambia
+  el plugin de macros, y podrías quedarte con expansiones viejas.
+
+**Correcciones**
+- `@MainActor @Inject` resuelto desde background ya no crashea (`mainActorRequired`; `resolveOnMainActor(_:)`), y un
+  miembro `@MainActor` ya no vuelve `@MainActor` a todo el tipo.
+- Las factories ya no corren con el lock tomado; `@Singleton`/`@Scoped` se construyen una sola vez con concurrencia;
+  ciclos entre hilos lanzan error en vez de bloquearse.
+- Las cachés de los scopes hijos se invalidan cuando un ancestro registra.
+- Todas las `@Precondition` del subgrafo se evalúan antes de construir nada (0 allocations si fallan).
+- `autoTeardown` funciona sin Objective-C (Linux); `visionOS` en `platforms`.
+- **Mínimos de plataforma más bajos:** iOS 15, macOS 12, tvOS 15, watchOS 8, Mac Catalyst 15 (antes iOS 17 / macOS 14).
+  Nada del runtime requería iOS 17; el límite impedía adoptarlo en apps que soportan iOS 15/16 (p. ej. Firefox for iOS).
+
+**Nuevo**
+- `GraphError.isProgrammerError`, `ScopeContainer.programmerErrorPolicy`.
+- `dagger-graph`: validación por raíz, `scopeNotActive` estático, build plugin, `generate`, tests de humo, manifiestos.
+
 ---
 
 ## 🚀 Comandos Rápidos
 
 ```bash
-# 1. Ejecutar el Debate Empírico y Benchmarks contra Point-Free TCA, Factory y Swinject (10 tests)
+# 1. Debate empírico y benchmarks (Rounds 1–4) contra Point-Free TCA, Factory y Swinject
 swift test --package-path Benchmarks
 
-# 2. Ejecutar tests del motor principal DaggerSwift (16 tests)
+# 2. Tests del motor DaggerSwift (runtime, macros, scopes anidados generados)
 swift test
 
-# 3. Ejecutar Linter de Arquitectura/SOLID + Unit Tests + Graph Tests del SampleProyect (12 tests)
+# 3. Linter de arquitectura + unit tests + graph tests + tests de humo del SampleProyect
 swift test --package-path Sources/SampleProyect
 
-# 4. Ejecutar el CLI interactivo de DaggerSwift
+# 4. Validar el grafo y regenerar código generado
+scripts/generate-graphs.sh
+
+# 5. Ejecutar el CLI interactivo de DaggerSwift
 swift run dagger-cli help
 ```
 
